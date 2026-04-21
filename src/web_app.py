@@ -261,30 +261,29 @@ tbody td {
 }
 tbody tr:nth-child(even) { background: var(--surface-soft); }
 tbody tr:hover { background: var(--surface-hover); }
-.folder-name, .root-name {
+.folder-name, .root-name, .parent-folder-name {
   font-weight: 600;
   color: var(--link-color);
+  cursor: pointer;
+  padding: 0.25rem 0.35rem;
+  border-radius: 4px;
+  transition: background-color 0.15s ease;
+  text-decoration: none;
+}
+.folder-name:hover, .root-name:hover, .parent-folder-name:hover {
+  background-color: var(--surface-hover);
 }
 .folder-cell {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 0.75rem;
 }
 .folder-main {
   min-width: 0;
 }
 .open-icon-button {
-  width: 2rem;
-  min-width: 2rem;
-  height: 2rem;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 5px;
-  font-size: 1rem;
-  line-height: 1;
+  display: none;
 }
 .path {
   word-break: break-all;
@@ -482,15 +481,17 @@ document.addEventListener("DOMContentLoaded", function () {
     } catch (_error) {}
   });
 
-  document.querySelectorAll("[data-open-path]").forEach(function (link) {
+  document.querySelectorAll("[data-folder-path]").forEach(function (link) {
     link.addEventListener("click", async function (event) {
       event.preventDefault();
-      const href = link.getAttribute("href");
-      if (!href) {
+      const path = link.getAttribute("data-folder-path");
+      if (!path) {
         return;
       }
+      const open_query = new URLSearchParams({ path: path });
+      const openUrl = "/open?" + open_query.toString();
       try {
-        await fetch(href, { method: "GET", cache: "no-store" });
+        await fetch(openUrl, { method: "GET", cache: "no-store" });
       } catch (_error) {
       }
     });
@@ -858,18 +859,13 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             "<tbody>",
         ]
         for row in rows:
-            open_query = urlencode({"path": row.path, "return_to": cls._current_search_path(row.root_id, query)})
             parent_name = Path(row.parent_path).name or row.parent_path
             lines.append(
                 "<tr>"
-                f"<td>{html.escape(parent_name)}</td>"
+                f"<td><a class='parent-folder-name' data-folder-path='{html.escape(row.parent_path, quote=True)}' href='#'>{html.escape(parent_name)}</a></td>"
                 "<td>"
                 "<div class='folder-cell'>"
-                f"<div class='folder-main'><div class='folder-name'>{cls._highlight_text(row.name, query)}</div></div>"
-                f"<a class='action-button open-icon-button' data-open-path href='/open?{open_query}' "
-                f"aria-label='{html.escape(row.name, quote=True)}を開く' title='Finderで開く'>"
-                "<span aria-hidden='true'>↗</span>"
-                "</a>"
+                f"<a class='folder-name' data-folder-path='{html.escape(row.path, quote=True)}' href='#'>{cls._highlight_text(row.name, query)}</a>"
                 "</div>"
                 "</td>"
                 "</tr>"
