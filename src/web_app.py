@@ -261,6 +261,17 @@ tbody td {
 }
 tbody tr:nth-child(even) { background: var(--surface-soft); }
 tbody tr:hover { background: var(--surface-hover); }
+.result-table th:first-child,
+.result-table td:first-child {
+  width: 11.5rem;
+  white-space: nowrap;
+  padding-right: 0.35rem;
+}
+.result-table th:nth-child(2),
+.result-table td:nth-child(2) {
+  text-align: left;
+  padding-left: 0.25rem;
+}
 .folder-name, .root-name, .parent-folder-name {
   font-weight: 600;
   color: var(--link-color);
@@ -849,7 +860,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         if not rows:
             return "<div class='empty'>該当するフォルダが見つかりませんでした。</div>"
         lines = [
-            "<table>",
+            "<table class='result-table'>",
             "<thead><tr><th>親フォルダ</th><th>フォルダ</th></tr></thead>",
             "<tbody>",
         ]
