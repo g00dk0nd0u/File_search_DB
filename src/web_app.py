@@ -700,12 +700,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            if sys.platform == "darwin":
-                subprocess.Popen(["open", str(path)])
-            elif sys.platform.startswith("win"):
-                subprocess.Popen(["explorer", str(path)])
-            else:
-                subprocess.Popen(["xdg-open", str(path)])
+            open_path_in_file_manager(path)
         except Exception as exc:
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, f"Open failed: {exc}")
             return
@@ -991,6 +986,16 @@ def choose_folder_path() -> str:
     if not selected:
         raise ValueError("フォルダ選択がキャンセルされました。")
     return selected
+
+
+def open_path_in_file_manager(path: Path) -> None:
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", str(path)])
+        return
+    if sys.platform.startswith("win"):
+        os.startfile(str(path))  # type: ignore[attr-defined]
+        return
+    subprocess.Popen(["xdg-open", str(path)])
 
 
 def find_listening_pids(port: int) -> list[int]:

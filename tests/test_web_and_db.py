@@ -16,7 +16,7 @@ import sys
 sys.path.append(str(ROOT / "src"))
 
 from file_database import add_root, connect_db, delete_root, ensure_db, get_root, init_db, list_roots, parse_folder_query, scan_root, search_folders  # type: ignore
-from web_app import CLIENT_SCRIPT, FileSearchHandler, FileSearchServer, SEARCH_PAGE_TEMPLATE, SETTINGS_PAGE_TEMPLATE, build_server_url, choose_folder_path, find_listening_pids, main, open_browser, stop_existing_server  # type: ignore
+from web_app import CLIENT_SCRIPT, FileSearchHandler, FileSearchServer, SEARCH_PAGE_TEMPLATE, SETTINGS_PAGE_TEMPLATE, build_server_url, choose_folder_path, find_listening_pids, main, open_browser, open_path_in_file_manager, stop_existing_server  # type: ignore
 
 
 class FolderDatabaseTests(unittest.TestCase):
@@ -344,6 +344,13 @@ class WebUiTests(unittest.TestCase):
                 FileSearchHandler._handle_open_path(handler, parsed)
 
         self.assertEqual(captured["status"], 204)
+
+    def test_open_path_in_file_manager_uses_startfile_on_windows(self):
+        with mock.patch("web_app.sys.platform", "win32"):
+            with mock.patch("web_app.os.startfile", create=True) as startfile:
+                open_path_in_file_manager(pathlib.Path(r"C:\work\sample"))
+
+        startfile.assert_called_once_with(r"C:\work\sample")
 
     def test_choose_folder_path_uses_macos_folder_dialog(self):
         completed = type("Completed", (), {"returncode": 0, "stdout": "/tmp/Project\n"})()
