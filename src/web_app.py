@@ -21,7 +21,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from string import Template
 from typing import Optional, Tuple
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 if __package__ in (None, ""):
     from file_database import add_root, connect_db, delete_root, ensure_db, get_root, list_roots, parse_folder_query, scan_root, search_folders
@@ -379,6 +379,24 @@ tbody tr:hover { background: var(--surface-hover); }
   font-size: 0.74rem;
   margin-bottom: 0.35rem;
 }
+.pdf-preview-frame {
+  width: 100%;
+  min-height: 28rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--surface-soft);
+}
+.pdf-fallback-link {
+  display: inline-flex;
+  margin-top: 0.45rem;
+  color: var(--link-color);
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+.pdf-fallback-link:hover {
+  text-decoration: underline;
+}
 .folder-name, .root-name, .parent-folder-name {
   font-weight: 600;
   color: var(--link-color);
@@ -621,6 +639,38 @@ document.addEventListener("DOMContentLoaded", function () {
     panel.appendChild(messageElement);
   };
 
+  const isPdfPath = function (path) {
+    return String(path || "").toLowerCase().endsWith(".pdf");
+  };
+
+  const buildFileUrl = function (rootId, path) {
+    const query = new URLSearchParams({ root_id: rootId, path: path });
+    return "/file?" + query.toString();
+  };
+
+  const renderPdfPreview = function (panel, rootId, path) {
+    panel.textContent = "";
+    const meta = document.createElement("div");
+    meta.className = "preview-meta";
+    meta.textContent = (path.split(/[\\\\/]/).pop() || path) + " / PDF";
+    panel.appendChild(meta);
+
+    const fileUrl = buildFileUrl(rootId, path);
+    const frame = document.createElement("iframe");
+    frame.className = "pdf-preview-frame";
+    frame.src = fileUrl;
+    frame.title = meta.textContent;
+    panel.appendChild(frame);
+
+    const fallback = document.createElement("a");
+    fallback.className = "pdf-fallback-link";
+    fallback.href = fileUrl;
+    fallback.target = "_blank";
+    fallback.rel = "noopener";
+    fallback.textContent = "PDFを別タブで開く";
+    panel.appendChild(fallback);
+  };
+
   const loadPreview = async function (link, panel, rootId) {
     const path = link.getAttribute("data-child-path") || "";
     if (!path || !panel || !rootId) {
@@ -638,6 +688,11 @@ document.addEventListener("DOMContentLoaded", function () {
     });
     link.classList.add("is-active");
 
+    if (isPdfPath(path)) {
+      renderPdfPreview(panel, rootId, path);
+      return;
+    }
+
     const query = new URLSearchParams({ root_id: rootId, path: path });
     renderPreviewMessage(panel, "読み込み中...", "preview-loading");
     try {
@@ -645,6 +700,10 @@ document.addEventListener("DOMContentLoaded", function () {
       const payload = await response.json();
       if (!response.ok) {
         renderPreviewMessage(panel, payload && payload.error ? String(payload.error) : "プレビューを取得できませんでした。", "preview-error");
+        return;
+      }
+      if (payload && payload.mime === "application/pdf") {
+        renderPdfPreview(panel, rootId, path);
         return;
       }
 
@@ -918,6 +977,9 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         if parsed.path == "/preview":
             self._handle_preview(parsed)
             return
+        if parsed.path == "/file":
+            self._handle_file(parsed)
+            return
         self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
 
     def do_POST(self):
@@ -1178,6 +1240,68 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         except OSError:
             self._send_json(HTTPStatus.BAD_REQUEST, self._preview_payload(path_value, error="Path cannot be resolved"))
 
+    def _handle_file(self, parsed):
+        params = parse_qs(parsed.query)
+        root_value = params.get("root_id", [""])[0].strip()
+        path_value = params.get("path", [""])[0].strip()
+        if not root_value:
+            self.send_error(HTTPStatus.BAD_REQUEST, "root_id is required")
+            return
+        if not path_value:
+            self.send_error(HTTPStatus.BAD_REQUEST, "path is required")
+            return
+        try:
+            root_id = int(root_value)
+        except ValueError:
+            self.send_error(HTTPStatus.BAD_REQUEST, "root_id is invalid")
+            return
+
+        path = Path(path_value)
+        if not path.exists():
+            self.send_error(HTTPStatus.NOT_FOUND, "Path not found")
+            return
+        if not path.is_file():
+            self.send_error(HTTPStatus.BAD_REQUEST, "Path is not a file")
+            return
+        mime = mimetypes.guess_type(str(path))[0] or ""
+        if path.suffix.casefold() != ".pdf" and mime != "application/pdf":
+            self.send_error(HTTPStatus.BAD_REQUEST, "Only PDF files can be previewed")
+            return
+
+        conn, warning = self._connect_existing_db()
+        if conn is None:
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, warning or "DB unavailable")
+            return
+
+        try:
+            with closing(conn):
+                root = get_root(conn, root_id)
+            if root is None:
+                self.send_error(HTTPStatus.NOT_FOUND, "Root not found")
+                return
+
+            target_path = path.resolve()
+            root_path = Path(root.root_path).resolve()
+            try:
+                target_path.relative_to(root_path)
+            except ValueError:
+                self.send_error(HTTPStatus.FORBIDDEN, "Path is outside root")
+                return
+
+            data = target_path.read_bytes()
+        except OSError as exc:
+            self.send_error(HTTPStatus.BAD_REQUEST, f"File cannot be read: {exc}")
+            return
+
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/pdf")
+        filename = quote(target_path.name, safe="")
+        self.send_header("Content-Disposition", f"inline; filename=\"preview.pdf\"; filename*=UTF-8''{filename}")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     @staticmethod
     def _preview_payload(path: str, content: str = "", truncated: bool = False, encoding: str = "", mime: str = "", error: Optional[str] = None):
         return {
@@ -1192,6 +1316,15 @@ class FileSearchHandler(BaseHTTPRequestHandler):
     @staticmethod
     def _read_preview(file_path: Path):
         mime = mimetypes.guess_type(str(file_path))[0] or ""
+        if file_path.suffix.casefold() == ".pdf" or mime == "application/pdf":
+            return FileSearchHandler._preview_payload(
+                str(file_path),
+                content="",
+                truncated=False,
+                encoding="",
+                mime="application/pdf",
+                error="PDFファイルは右ペインで表示します。",
+            )
         with file_path.open("rb") as file_obj:
             raw = file_obj.read(PREVIEW_BYTES + 1)
 

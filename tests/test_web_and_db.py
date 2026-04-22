@@ -230,6 +230,9 @@ class WebUiTests(unittest.TestCase):
         self.assertIn('fetch("/preview?" + query.toString()', CLIENT_SCRIPT)
         self.assertIn("data-expand-toggle", CLIENT_SCRIPT)
         self.assertIn("data-open-folder-path", CLIENT_SCRIPT)
+        self.assertIn("buildFileUrl", CLIENT_SCRIPT)
+        self.assertIn("pdf-preview-frame", CLIENT_SCRIPT)
+        self.assertIn('"/file?" + query.toString()', CLIENT_SCRIPT)
 
     def test_parse_search_inputs(self):
         root_id, query = FileSearchHandler._parse_search_inputs("root_id=12&q=Project")
@@ -573,6 +576,16 @@ class WebUiTests(unittest.TestCase):
         self.assertEqual(body["encoding"], "binary")
         self.assertIn("バイナリファイル", body["error"])
 
+    def test_read_preview_reports_pdf_mime_for_pdf_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            file_path = pathlib.Path(tmp) / "sample.pdf"
+            file_path.write_bytes(b"%PDF-1.4\n%%EOF\n")
+            body = FileSearchHandler._read_preview(file_path)
+
+        self.assertEqual(body["content"], "")
+        self.assertEqual(body["mime"], "application/pdf")
+        self.assertIn("PDF", body["error"])
+
     def test_handle_preview_rejects_missing_non_file_outside_and_not_found(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = pathlib.Path(tmp)
@@ -617,6 +630,91 @@ class WebUiTests(unittest.TestCase):
         self.assertIn("outside root", outside_body["error"])
         self.assertEqual(not_found_status, 404)
         self.assertIn("Path not found", not_found_body["error"])
+
+    def test_handle_file_serves_root_pdf_inline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            root_dir = base / "Root"
+            root_dir.mkdir()
+            pdf_path = root_dir / "申請分の書類.pdf"
+            pdf_bytes = b"%PDF-1.4\n%%EOF\n"
+            pdf_path.write_bytes(pdf_bytes)
+
+            db_path = base / "index.db"
+            conn = connect_db(db_path)
+            try:
+                ensure_db(conn)
+                root = add_root(conn, "Root", root_dir)
+                conn.commit()
+            finally:
+                conn.close()
+
+            handler = object.__new__(FileSearchHandler)
+            handler.db_path = str(db_path)
+            captured = {}
+            handler.send_response = lambda status: captured.setdefault("status", status)
+            handler.send_header = lambda key, value: captured.setdefault(key, value)
+            handler.end_headers = lambda: captured.setdefault("ended", True)
+            handler.wfile = io.BytesIO()
+
+            query = urlencode({"root_id": root.id, "path": str(pdf_path)})
+            FileSearchHandler._handle_file(handler, urlparse(f"/file?{query}"))
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["Content-Type"], "application/pdf")
+        self.assertIn("inline", captured["Content-Disposition"])
+        self.assertIn('filename="preview.pdf"', captured["Content-Disposition"])
+        self.assertIn("filename*=UTF-8''", captured["Content-Disposition"])
+        captured["Content-Disposition"].encode("latin-1")
+        self.assertEqual(handler.wfile.getvalue(), pdf_bytes)
+
+    def test_handle_file_rejects_outside_missing_directory_and_non_pdf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            root_dir = base / "Root"
+            outside_dir = base / "Outside"
+            root_dir.mkdir()
+            outside_dir.mkdir()
+            outside_pdf = outside_dir / "outside.pdf"
+            outside_pdf.write_bytes(b"%PDF-1.4\n%%EOF\n")
+            non_pdf = root_dir / "note.txt"
+            non_pdf.write_text("not pdf", encoding="utf-8")
+
+            db_path = base / "index.db"
+            conn = connect_db(db_path)
+            try:
+                ensure_db(conn)
+                root = add_root(conn, "Root", root_dir)
+                conn.commit()
+            finally:
+                conn.close()
+
+            def call_file(query_params):
+                handler = object.__new__(FileSearchHandler)
+                handler.db_path = str(db_path)
+                captured = {}
+                handler.send_error = lambda status, message=None: captured.setdefault("error", (status, message))
+                handler.wfile = io.BytesIO()
+                query = urlencode(query_params)
+                FileSearchHandler._handle_file(handler, urlparse(f"/file?{query}"))
+                return captured["error"]
+
+            missing_path_error = call_file({"root_id": root.id})
+            directory_error = call_file({"root_id": root.id, "path": str(root_dir)})
+            non_pdf_error = call_file({"root_id": root.id, "path": str(non_pdf)})
+            outside_error = call_file({"root_id": root.id, "path": str(outside_pdf)})
+            not_found_error = call_file({"root_id": root.id, "path": str(root_dir / "missing.pdf")})
+
+        self.assertEqual(missing_path_error[0], 400)
+        self.assertIn("path is required", missing_path_error[1])
+        self.assertEqual(directory_error[0], 400)
+        self.assertIn("not a file", directory_error[1])
+        self.assertEqual(non_pdf_error[0], 400)
+        self.assertIn("Only PDF", non_pdf_error[1])
+        self.assertEqual(outside_error[0], 403)
+        self.assertIn("outside root", outside_error[1])
+        self.assertEqual(not_found_error[0], 404)
+        self.assertIn("Path not found", not_found_error[1])
 
     def test_open_path_in_file_manager_uses_startfile_on_windows(self):
         with mock.patch("web_app.sys.platform", "win32"):
