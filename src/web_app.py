@@ -6,6 +6,7 @@ import argparse
 from contextlib import closing
 import errno
 import html
+import json
 import os
 from pathlib import Path
 import re
@@ -272,6 +273,59 @@ tbody tr:hover { background: var(--surface-hover); }
   text-align: left;
   padding-left: 0.25rem;
 }
+.result-detail-row td {
+  background: var(--surface-muted);
+  border-top: 1px solid var(--border-row);
+  padding: 0.3rem 0.75rem 0.5rem 0.75rem;
+}
+.result-detail-row[hidden] { display: none; }
+.folder-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.folder-name[data-expanded="true"] {
+  background-color: var(--surface-hover);
+}
+.children-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.12rem 0 0;
+}
+.children-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.48rem;
+  padding: 0.12rem 0;
+  line-height: 1.35;
+}
+.children-kind {
+  min-width: 2rem;
+  color: var(--text-subtle);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.children-link {
+  color: var(--link-color);
+  text-decoration: none;
+  font-weight: 500;
+  word-break: break-all;
+}
+.children-link:hover {
+  text-decoration: underline;
+}
+.children-empty,
+.children-loading,
+.children-error {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  padding: 0.15rem 0;
+  word-break: break-word;
+}
+.children-error {
+  color: var(--notice-error-text);
+}
 .folder-name, .root-name, .parent-folder-name {
   font-weight: 600;
   color: var(--link-color);
@@ -492,20 +546,142 @@ document.addEventListener("DOMContentLoaded", function () {
     } catch (_error) {}
   });
 
-  document.querySelectorAll("[data-folder-path]").forEach(function (link) {
-    link.addEventListener("click", async function (event) {
+  const openPath = async function (path) {
+    const open_query = new URLSearchParams({ path: path });
+    const openUrl = "/open?" + open_query.toString();
+    try {
+      await fetch(openUrl, { method: "GET", cache: "no-store" });
+    } catch (_error) {
+    }
+  };
+
+  const renderChildrenItems = function (panel, payload) {
+    panel.textContent = "";
+    if (!payload || !Array.isArray(payload.items) || payload.items.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "children-empty";
+      empty.textContent = "表示できる項目はありません。";
+      panel.appendChild(empty);
+      return;
+    }
+
+    const list = document.createElement("ul");
+    list.className = "children-list";
+    payload.items.forEach(function (item) {
+      const row = document.createElement("li");
+      row.className = "children-item";
+
+      const kind = document.createElement("span");
+      kind.className = "children-kind";
+      kind.textContent = item.type === "dir" ? "DIR" : "FILE";
+      row.appendChild(kind);
+
+      const link = document.createElement("a");
+      link.className = "children-link";
+      link.href = "#";
+      link.setAttribute("data-folder-path", item.path || "");
+      link.textContent = item.name || item.path || "(unknown)";
+      row.appendChild(link);
+
+      list.appendChild(row);
+    });
+    panel.appendChild(list);
+  };
+
+  let expandedDetailRow = null;
+  const closeExpandedRow = function () {
+    if (!expandedDetailRow) {
+      return;
+    }
+    const ownerRow = expandedDetailRow.previousElementSibling;
+    if (ownerRow) {
+      const ownerToggle = ownerRow.querySelector("[data-expand-toggle]");
+      if (ownerToggle) {
+        ownerToggle.setAttribute("data-expanded", "false");
+      }
+    }
+    expandedDetailRow.hidden = true;
+    expandedDetailRow = null;
+  };
+
+  document.addEventListener("click", async function (event) {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    const openLink = target.closest("[data-folder-path]");
+    if (openLink) {
       event.preventDefault();
-      const path = link.getAttribute("data-folder-path");
-      if (!path) {
+      const path = openLink.getAttribute("data-folder-path");
+      if (path) {
+        await openPath(path);
+      }
+      return;
+    }
+
+    const toggleLink = target.closest("[data-expand-toggle]");
+    if (!toggleLink) {
+      return;
+    }
+    event.preventDefault();
+
+    const row = toggleLink.closest("tr[data-row-path]");
+    if (!row) {
+      return;
+    }
+    const detailRow = row.nextElementSibling;
+    if (!detailRow || !detailRow.hasAttribute("data-expand-row")) {
+      return;
+    }
+
+    if (detailRow.hidden === false) {
+      toggleLink.setAttribute("data-expanded", "false");
+      detailRow.hidden = true;
+      if (expandedDetailRow === detailRow) {
+        expandedDetailRow = null;
+      }
+      return;
+    }
+
+    closeExpandedRow();
+    toggleLink.setAttribute("data-expanded", "true");
+    detailRow.hidden = false;
+    expandedDetailRow = detailRow;
+
+    const rootId = toggleLink.getAttribute("data-root-id") || "";
+    const folderPath = toggleLink.getAttribute("data-expand-path") || "";
+    const panel = detailRow.querySelector("[data-child-panel]");
+    if (!rootId || !folderPath || !panel) {
+      return;
+    }
+
+    panel.textContent = "";
+    const loading = document.createElement("div");
+    loading.className = "children-loading";
+    loading.textContent = "読み込み中...";
+    panel.appendChild(loading);
+
+    const query = new URLSearchParams({ root_id: rootId, path: folderPath });
+    try {
+      const response = await fetch("/children?" + query.toString(), { method: "GET", cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok) {
+        const error = document.createElement("div");
+        error.className = "children-error";
+        error.textContent = payload && payload.error ? String(payload.error) : "項目を取得できませんでした。";
+        panel.textContent = "";
+        panel.appendChild(error);
         return;
       }
-      const open_query = new URLSearchParams({ path: path });
-      const openUrl = "/open?" + open_query.toString();
-      try {
-        await fetch(openUrl, { method: "GET", cache: "no-store" });
-      } catch (_error) {
-      }
-    });
+      renderChildrenItems(panel, payload);
+    } catch (_error) {
+      const error = document.createElement("div");
+      error.className = "children-error";
+      error.textContent = "項目を取得できませんでした。";
+      panel.textContent = "";
+      panel.appendChild(error);
+    }
   });
 
   const form = document.querySelector(".search-form");
@@ -590,6 +766,9 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/open":
             self._handle_open_path(parsed)
+            return
+        if parsed.path == "/children":
+            self._handle_children(parsed)
             return
         self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
 
@@ -745,6 +924,92 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_json(self, status: HTTPStatus, payload: dict):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _handle_children(self, parsed):
+        params = parse_qs(parsed.query)
+        root_value = params.get("root_id", [""])[0].strip()
+        path_value = params.get("path", [""])[0].strip()
+        if not root_value:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"path": path_value, "items": [], "error": "root_id is required"})
+            return
+        if not path_value:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"path": path_value, "items": [], "error": "path is required"})
+            return
+        try:
+            root_id = int(root_value)
+        except ValueError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"path": path_value, "items": [], "error": "root_id is invalid"})
+            return
+
+        path = Path(path_value)
+        if not path.exists():
+            self._send_json(HTTPStatus.NOT_FOUND, {"path": path_value, "items": [], "error": "Path not found"})
+            return
+        if not path.is_dir():
+            self._send_json(HTTPStatus.BAD_REQUEST, {"path": path_value, "items": [], "error": "Path is not a directory"})
+            return
+
+        conn, warning = self._connect_existing_db()
+        if conn is None:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"path": path_value, "items": [], "error": warning or "DB unavailable"})
+            return
+
+        try:
+            with closing(conn):
+                root = get_root(conn, root_id)
+            if root is None:
+                self._send_json(HTTPStatus.NOT_FOUND, {"path": path_value, "items": [], "error": "Root not found"})
+                return
+
+            target_path = path.resolve()
+            root_path = Path(root.root_path).resolve()
+            try:
+                target_path.relative_to(root_path)
+            except ValueError:
+                self._send_json(HTTPStatus.FORBIDDEN, {"path": str(target_path), "items": [], "error": "Path is outside root"})
+                return
+
+            items = self._collect_children_items(target_path)
+            self._send_json(HTTPStatus.OK, {"path": str(target_path), "items": items, "error": None})
+        except OSError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"path": path_value, "items": [], "error": "Path cannot be resolved"})
+
+    @staticmethod
+    def _collect_children_items(folder_path: Path):
+        typed_items = []
+        try:
+            entries = list(folder_path.iterdir())
+        except OSError:
+            return []
+
+        for entry in entries:
+            if entry.name.startswith("."):
+                continue
+            item_type = ""
+            if entry.is_dir():
+                item_type = "dir"
+            elif entry.is_file():
+                item_type = "file"
+            if not item_type:
+                continue
+            typed_items.append(
+                (
+                    0 if item_type == "dir" else 1,
+                    entry.name.casefold(),
+                    {"name": entry.name, "path": str(entry.resolve()), "type": item_type},
+                )
+            )
+        typed_items.sort(key=lambda item: (item[0], item[1]))
+        return [item[2] for item in typed_items]
+
     def _redirect_with_message(self, kind: str, message: str):
         query = urlencode({"kind": kind, "message": message})
         self.send_response(HTTPStatus.SEE_OTHER)
@@ -866,14 +1131,18 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         ]
         for row in rows:
             parent_name = Path(row.parent_path).name or row.parent_path
+            row_path = html.escape(row.path, quote=True)
             lines.append(
-                "<tr>"
+                f"<tr data-row-path='{row_path}' data-root-id='{row.root_id}'>"
                 f"<td><a class='parent-folder-name' data-folder-path='{html.escape(row.parent_path, quote=True)}' href='#'>{html.escape(parent_name)}</a></td>"
                 "<td>"
                 "<div class='folder-cell'>"
-                f"<a class='folder-name' data-folder-path='{html.escape(row.path, quote=True)}' href='#'>{cls._highlight_text(row.name, query)}</a>"
+                f"<a class='folder-name' data-expand-toggle='1' data-expanded='false' data-root-id='{row.root_id}' data-expand-path='{row_path}' href='#'>{cls._highlight_text(row.name, query)}</a>"
                 "</div>"
                 "</td>"
+                "</tr>"
+                "<tr class='result-detail-row' data-expand-row='1' hidden>"
+                "<td colspan='2'><div data-child-panel='1'></div></td>"
                 "</tr>"
             )
         lines.append("</tbody></table>")

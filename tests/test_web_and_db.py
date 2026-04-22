@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import pathlib
+import io
+import json
 import sqlite3
 import tempfile
 import threading
 import unittest
 from unittest import mock
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 import sys
@@ -224,6 +226,8 @@ class WebUiTests(unittest.TestCase):
         self.assertIn("setSelectionRange(cursorPosition, cursorPosition)", CLIENT_SCRIPT)
         restore_block = CLIENT_SCRIPT.split("const restoreQueryFocus = function () {", 1)[1].split("};", 1)[0]
         self.assertNotIn("!queryInput.value", restore_block)
+        self.assertIn('fetch("/children?" + query.toString()', CLIENT_SCRIPT)
+        self.assertIn("data-expand-toggle", CLIENT_SCRIPT)
 
     def test_parse_search_inputs(self):
         root_id, query = FileSearchHandler._parse_search_inputs("root_id=12&q=Project")
@@ -234,7 +238,7 @@ class WebUiTests(unittest.TestCase):
         self.assertIsNone(root_id_invalid)
         self.assertEqual(query_invalid, "Project")
 
-    def test_render_results_contains_open_link_and_highlight(self):
+    def test_render_results_contains_expand_toggle_and_highlight(self):
         class Row:
             root_id = 1
             root_name = "Root"
@@ -248,11 +252,11 @@ class WebUiTests(unittest.TestCase):
         html_doc = FileSearchHandler.render_results([Row()], "Project")
         self.assertIn("<mark>Project</mark>Docs", html_doc)
         self.assertNotIn("/tmp/<mark>Project</mark>Docs", html_doc)
-        self.assertIn("/open?path=%2Ftmp%2FProjectDocs", html_doc)
-        self.assertIn("return_to=%2F%3Froot_id%3D1%26q%3DProject", html_doc)
-        self.assertIn("data-open-path", html_doc)
-        self.assertIn("open-icon-button", html_doc)
-        self.assertIn("aria-label='ProjectDocsを開く'", html_doc)
+        self.assertIn("data-row-path='/tmp/ProjectDocs'", html_doc)
+        self.assertIn("data-expand-toggle='1'", html_doc)
+        self.assertIn("data-expand-path='/tmp/ProjectDocs'", html_doc)
+        self.assertIn("class='result-detail-row'", html_doc)
+        self.assertIn("data-child-panel='1'", html_doc)
         self.assertIn("<thead><tr><th>親フォルダ</th><th>フォルダ</th></tr></thead>", html_doc)
         self.assertNotIn("<th>パス</th>", html_doc)
         self.assertNotIn("<th>操作</th>", html_doc)
@@ -344,6 +348,146 @@ class WebUiTests(unittest.TestCase):
                 FileSearchHandler._handle_open_path(handler, parsed)
 
         self.assertEqual(captured["status"], 204)
+
+    def test_collect_children_items_sorts_and_skips_hidden(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            (base / ".hidden_dir").mkdir()
+            (base / ".hidden_file.txt").write_text("x", encoding="utf-8")
+            (base / "z_dir").mkdir()
+            (base / "a_dir").mkdir()
+            (base / "b.txt").write_text("x", encoding="utf-8")
+            (base / "a.txt").write_text("x", encoding="utf-8")
+            items = FileSearchHandler._collect_children_items(base)
+
+        self.assertEqual(
+            [(item["type"], item["name"]) for item in items],
+            [("dir", "a_dir"), ("dir", "z_dir"), ("file", "a.txt"), ("file", "b.txt")],
+        )
+
+    def test_handle_children_returns_direct_items(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            root_dir = base / "Root"
+            target_dir = root_dir / "Parent"
+            target_dir.mkdir(parents=True)
+            (target_dir / "Sub").mkdir()
+            (target_dir / "file.txt").write_text("x", encoding="utf-8")
+
+            db_path = base / "index.db"
+            conn = connect_db(db_path)
+            try:
+                ensure_db(conn)
+                root = add_root(conn, "Root", root_dir)
+                conn.commit()
+            finally:
+                conn.close()
+
+            handler = object.__new__(FileSearchHandler)
+            handler.db_path = str(db_path)
+            captured = {}
+            handler.send_response = lambda status: captured.setdefault("status", status)
+            handler.send_header = lambda key, value: captured.setdefault(key, value)
+            handler.end_headers = lambda: captured.setdefault("ended", True)
+            handler.wfile = io.BytesIO()
+
+            query = urlencode({"root_id": root.id, "path": str(target_dir)})
+            FileSearchHandler._handle_children(handler, urlparse(f"/children?{query}"))
+            body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(body["error"], None)
+        self.assertEqual([item["type"] for item in body["items"]], ["dir", "file"])
+        self.assertEqual({item["name"] for item in body["items"]}, {"Sub", "file.txt"})
+
+    def test_handle_children_rejects_outside_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            root_dir = base / "Root"
+            outside_dir = base / "Outside"
+            root_dir.mkdir()
+            outside_dir.mkdir()
+
+            db_path = base / "index.db"
+            conn = connect_db(db_path)
+            try:
+                ensure_db(conn)
+                root = add_root(conn, "Root", root_dir)
+                conn.commit()
+            finally:
+                conn.close()
+
+            handler = object.__new__(FileSearchHandler)
+            handler.db_path = str(db_path)
+            captured = {}
+            handler.send_response = lambda status: captured.setdefault("status", status)
+            handler.send_header = lambda key, value: captured.setdefault(key, value)
+            handler.end_headers = lambda: captured.setdefault("ended", True)
+            handler.wfile = io.BytesIO()
+
+            query = urlencode({"root_id": root.id, "path": str(outside_dir)})
+            FileSearchHandler._handle_children(handler, urlparse(f"/children?{query}"))
+            body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+
+        self.assertEqual(captured["status"], 403)
+        self.assertIn("outside root", body["error"])
+
+    def test_handle_children_returns_errors_for_missing_or_non_directory_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            root_dir = base / "Root"
+            root_dir.mkdir()
+            file_path = root_dir / "note.txt"
+            file_path.write_text("x", encoding="utf-8")
+
+            db_path = base / "index.db"
+            conn = connect_db(db_path)
+            try:
+                ensure_db(conn)
+                root = add_root(conn, "Root", root_dir)
+                conn.commit()
+            finally:
+                conn.close()
+
+            missing_path_handler = object.__new__(FileSearchHandler)
+            missing_path_handler.db_path = str(db_path)
+            missing_captured = {}
+            missing_path_handler.send_response = lambda status: missing_captured.setdefault("status", status)
+            missing_path_handler.send_header = lambda key, value: missing_captured.setdefault(key, value)
+            missing_path_handler.end_headers = lambda: missing_captured.setdefault("ended", True)
+            missing_path_handler.wfile = io.BytesIO()
+            query_without_path = urlencode({"root_id": root.id})
+            FileSearchHandler._handle_children(missing_path_handler, urlparse(f"/children?{query_without_path}"))
+            missing_body = json.loads(missing_path_handler.wfile.getvalue().decode("utf-8"))
+
+            file_path_handler = object.__new__(FileSearchHandler)
+            file_path_handler.db_path = str(db_path)
+            file_captured = {}
+            file_path_handler.send_response = lambda status: file_captured.setdefault("status", status)
+            file_path_handler.send_header = lambda key, value: file_captured.setdefault(key, value)
+            file_path_handler.end_headers = lambda: file_captured.setdefault("ended", True)
+            file_path_handler.wfile = io.BytesIO()
+            query_with_file = urlencode({"root_id": root.id, "path": str(file_path)})
+            FileSearchHandler._handle_children(file_path_handler, urlparse(f"/children?{query_with_file}"))
+            file_body = json.loads(file_path_handler.wfile.getvalue().decode("utf-8"))
+
+            missing_target_handler = object.__new__(FileSearchHandler)
+            missing_target_handler.db_path = str(db_path)
+            missing_target_captured = {}
+            missing_target_handler.send_response = lambda status: missing_target_captured.setdefault("status", status)
+            missing_target_handler.send_header = lambda key, value: missing_target_captured.setdefault(key, value)
+            missing_target_handler.end_headers = lambda: missing_target_captured.setdefault("ended", True)
+            missing_target_handler.wfile = io.BytesIO()
+            query_with_missing_target = urlencode({"root_id": root.id, "path": str(root_dir / "missing")})
+            FileSearchHandler._handle_children(missing_target_handler, urlparse(f"/children?{query_with_missing_target}"))
+            missing_target_body = json.loads(missing_target_handler.wfile.getvalue().decode("utf-8"))
+
+        self.assertEqual(missing_captured["status"], 400)
+        self.assertIn("path is required", missing_body["error"])
+        self.assertEqual(file_captured["status"], 400)
+        self.assertIn("not a directory", file_body["error"])
+        self.assertEqual(missing_target_captured["status"], 404)
+        self.assertIn("Path not found", missing_target_body["error"])
 
     def test_open_path_in_file_manager_uses_startfile_on_windows(self):
         with mock.patch("web_app.sys.platform", "win32"):
