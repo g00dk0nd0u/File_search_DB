@@ -7,6 +7,7 @@ from contextlib import closing
 import errno
 import html
 import json
+import mimetypes
 import os
 from pathlib import Path
 import re
@@ -29,6 +30,7 @@ else:
 
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "file_index.db"
+PREVIEW_BYTES = 16 * 1024
 
 
 BASE_CSS = """
@@ -262,21 +264,10 @@ tbody td {
 }
 tbody tr:nth-child(even) { background: var(--surface-soft); }
 tbody tr:hover { background: var(--surface-hover); }
-.result-table th:first-child,
-.result-table td:first-child {
-  width: 11.5rem;
-  white-space: nowrap;
-  padding-right: 0.35rem;
-}
-.result-table th:nth-child(2),
-.result-table td:nth-child(2) {
-  text-align: left;
-  padding-left: 0.25rem;
-}
 .result-detail-row td {
   background: var(--surface-muted);
   border-top: 1px solid var(--border-row);
-  padding: 0.3rem 0.75rem 0.5rem 0.75rem;
+  padding: 0.55rem 0.75rem 0.7rem;
 }
 .result-detail-row[hidden] { display: none; }
 .folder-name {
@@ -286,6 +277,42 @@ tbody tr:hover { background: var(--surface-hover); }
 }
 .folder-name[data-expanded="true"] {
   background-color: var(--surface-hover);
+}
+.detail-shell {
+  display: grid;
+  gap: 0.55rem;
+}
+.detail-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+.folder-open-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  padding: 0;
+  border: 1px solid var(--border-button);
+  border-radius: 5px;
+  background: var(--nav-bg);
+  color: var(--link-color);
+  font-size: 0.95rem;
+  line-height: 1;
+}
+.folder-open-button:hover { background: var(--surface-hover); }
+.detail-grid {
+  display: grid;
+  grid-template-columns: minmax(12rem, 0.9fr) minmax(16rem, 1.4fr);
+  gap: 0.75rem;
+}
+.children-panel,
+.preview-panel {
+  min-width: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--surface-color);
+  padding: 0.55rem 0.65rem;
 }
 .children-list {
   list-style: none;
@@ -300,7 +327,7 @@ tbody tr:hover { background: var(--surface-hover); }
   line-height: 1.35;
 }
 .children-kind {
-  min-width: 2rem;
+  min-width: 2.25rem;
   color: var(--text-subtle);
   font-size: 0.78rem;
   font-weight: 600;
@@ -315,16 +342,42 @@ tbody tr:hover { background: var(--surface-hover); }
 .children-link:hover {
   text-decoration: underline;
 }
+.children-link.is-active {
+  background: var(--surface-hover);
+  border-radius: 4px;
+  padding: 0.05rem 0.2rem;
+}
 .children-empty,
 .children-loading,
-.children-error {
+.children-error,
+.preview-empty,
+.preview-loading,
+.preview-error,
+.preview-note {
   color: var(--text-muted);
   font-size: 0.82rem;
   padding: 0.15rem 0;
   word-break: break-word;
 }
-.children-error {
+.children-error,
+.preview-error {
   color: var(--notice-error-text);
+}
+.preview-content {
+  margin: 0;
+  max-height: 18rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--text-color);
+}
+.preview-meta {
+  color: var(--text-subtle);
+  font-size: 0.74rem;
+  margin-bottom: 0.35rem;
 }
 .folder-name, .root-name, .parent-folder-name {
   font-weight: 600;
@@ -349,6 +402,11 @@ tbody tr:hover { background: var(--surface-hover); }
 }
 .open-icon-button {
   display: none;
+}
+@media (max-width: 720px) {
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
 }
 .path {
   word-break: break-all;
@@ -555,6 +613,62 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   };
 
+  const renderPreviewMessage = function (panel, message, className) {
+    panel.textContent = "";
+    const messageElement = document.createElement("div");
+    messageElement.className = className;
+    messageElement.textContent = message;
+    panel.appendChild(messageElement);
+  };
+
+  const loadPreview = async function (link, panel, rootId) {
+    const path = link.getAttribute("data-child-path") || "";
+    if (!path || !panel || !rootId) {
+      return;
+    }
+
+    const detailRow = link.closest("[data-expand-row]");
+    if (detailRow) {
+      detailRow.querySelectorAll(".children-link").forEach(function (otherLink) {
+        otherLink.classList.remove("is-active");
+      });
+    }
+    panel.querySelectorAll(".children-link").forEach(function (otherLink) {
+      otherLink.classList.remove("is-active");
+    });
+    link.classList.add("is-active");
+
+    const query = new URLSearchParams({ root_id: rootId, path: path });
+    renderPreviewMessage(panel, "読み込み中...", "preview-loading");
+    try {
+      const response = await fetch("/preview?" + query.toString(), { method: "GET", cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok) {
+        renderPreviewMessage(panel, payload && payload.error ? String(payload.error) : "プレビューを取得できませんでした。", "preview-error");
+        return;
+      }
+
+      panel.textContent = "";
+      const meta = document.createElement("div");
+      meta.className = "preview-meta";
+      const name = path.split(/[\\\\/]/).pop() || path;
+      meta.textContent = name + (payload.truncated ? " / 先頭のみ表示" : "");
+      panel.appendChild(meta);
+
+      if (!payload.content) {
+        renderPreviewMessage(panel, payload.error || "プレビューできるテキスト内容がありません。", "preview-note");
+        return;
+      }
+
+      const pre = document.createElement("pre");
+      pre.className = "preview-content";
+      pre.textContent = payload.content;
+      panel.appendChild(pre);
+    } catch (_error) {
+      renderPreviewMessage(panel, "プレビューを取得できませんでした。", "preview-error");
+    }
+  };
+
   const renderChildrenItems = function (panel, payload) {
     panel.textContent = "";
     if (!payload || !Array.isArray(payload.items) || payload.items.length === 0) {
@@ -579,8 +693,9 @@ document.addEventListener("DOMContentLoaded", function () {
       const link = document.createElement("a");
       link.className = "children-link";
       link.href = "#";
-      link.setAttribute("data-folder-path", item.path || "");
-      link.textContent = item.name || item.path || "(unknown)";
+      link.setAttribute("data-child-path", item.path || "");
+      link.setAttribute("data-child-type", item.type || "");
+      link.textContent = item.type === "dir" ? "/" + (item.name || item.path || "(unknown)") : (item.name || item.path || "(unknown)");
       row.appendChild(link);
 
       list.appendChild(row);
@@ -607,6 +722,32 @@ document.addEventListener("DOMContentLoaded", function () {
   document.addEventListener("click", async function (event) {
     const target = event.target;
     if (!(target instanceof Element)) {
+      return;
+    }
+
+    const folderOpenButton = target.closest("[data-open-folder-path]");
+    if (folderOpenButton) {
+      event.preventDefault();
+      const path = folderOpenButton.getAttribute("data-open-folder-path");
+      if (path) {
+        await openPath(path);
+      }
+      return;
+    }
+
+    const childLink = target.closest("[data-child-path]");
+    if (childLink) {
+      event.preventDefault();
+      const childType = childLink.getAttribute("data-child-type") || "";
+      const path = childLink.getAttribute("data-child-path") || "";
+      if (childType === "dir") {
+        await openPath(path);
+        return;
+      }
+      const detailRow = childLink.closest("[data-expand-row]");
+      const previewPanel = detailRow ? detailRow.querySelector("[data-preview-panel]") : null;
+      const rootId = detailRow ? detailRow.getAttribute("data-root-id") || "" : "";
+      await loadPreview(childLink, previewPanel, rootId);
       return;
     }
 
@@ -652,11 +793,15 @@ document.addEventListener("DOMContentLoaded", function () {
     const rootId = toggleLink.getAttribute("data-root-id") || "";
     const folderPath = toggleLink.getAttribute("data-expand-path") || "";
     const panel = detailRow.querySelector("[data-child-panel]");
+    const previewPanel = detailRow.querySelector("[data-preview-panel]");
     if (!rootId || !folderPath || !panel) {
       return;
     }
 
     panel.textContent = "";
+    if (previewPanel) {
+      renderPreviewMessage(previewPanel, "ファイルを選択するとここにプレビューを表示します。", "preview-empty");
+    }
     const loading = document.createElement("div");
     loading.className = "children-loading";
     loading.textContent = "読み込み中...";
@@ -769,6 +914,9 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/children":
             self._handle_children(parsed)
+            return
+        if parsed.path == "/preview":
+            self._handle_preview(parsed)
             return
         self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
 
@@ -982,6 +1130,105 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         except OSError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"path": path_value, "items": [], "error": "Path cannot be resolved"})
 
+    def _handle_preview(self, parsed):
+        params = parse_qs(parsed.query)
+        root_value = params.get("root_id", [""])[0].strip()
+        path_value = params.get("path", [""])[0].strip()
+        if not root_value:
+            self._send_json(HTTPStatus.BAD_REQUEST, self._preview_payload(path_value, error="root_id is required"))
+            return
+        if not path_value:
+            self._send_json(HTTPStatus.BAD_REQUEST, self._preview_payload(path_value, error="path is required"))
+            return
+        try:
+            root_id = int(root_value)
+        except ValueError:
+            self._send_json(HTTPStatus.BAD_REQUEST, self._preview_payload(path_value, error="root_id is invalid"))
+            return
+
+        path = Path(path_value)
+        if not path.exists():
+            self._send_json(HTTPStatus.NOT_FOUND, self._preview_payload(path_value, error="Path not found"))
+            return
+        if not path.is_file():
+            self._send_json(HTTPStatus.BAD_REQUEST, self._preview_payload(path_value, error="Path is not a file"))
+            return
+
+        conn, warning = self._connect_existing_db()
+        if conn is None:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, self._preview_payload(path_value, error=warning or "DB unavailable"))
+            return
+
+        try:
+            with closing(conn):
+                root = get_root(conn, root_id)
+            if root is None:
+                self._send_json(HTTPStatus.NOT_FOUND, self._preview_payload(path_value, error="Root not found"))
+                return
+
+            target_path = path.resolve()
+            root_path = Path(root.root_path).resolve()
+            try:
+                target_path.relative_to(root_path)
+            except ValueError:
+                self._send_json(HTTPStatus.FORBIDDEN, self._preview_payload(str(target_path), error="Path is outside root"))
+                return
+
+            self._send_json(HTTPStatus.OK, self._read_preview(target_path))
+        except OSError:
+            self._send_json(HTTPStatus.BAD_REQUEST, self._preview_payload(path_value, error="Path cannot be resolved"))
+
+    @staticmethod
+    def _preview_payload(path: str, content: str = "", truncated: bool = False, encoding: str = "", mime: str = "", error: Optional[str] = None):
+        return {
+            "path": path,
+            "content": content,
+            "truncated": truncated,
+            "encoding": encoding,
+            "mime": mime,
+            "error": error,
+        }
+
+    @staticmethod
+    def _read_preview(file_path: Path):
+        mime = mimetypes.guess_type(str(file_path))[0] or ""
+        with file_path.open("rb") as file_obj:
+            raw = file_obj.read(PREVIEW_BYTES + 1)
+
+        truncated = len(raw) > PREVIEW_BYTES
+        sample = raw[:PREVIEW_BYTES]
+        if b"\x00" in sample:
+            return FileSearchHandler._preview_payload(
+                str(file_path),
+                content="",
+                truncated=truncated,
+                encoding="binary",
+                mime=mime,
+                error="バイナリファイルのためプレビューできません。",
+            )
+
+        for encoding in ("utf-8", "cp932"):
+            try:
+                return FileSearchHandler._preview_payload(
+                    str(file_path),
+                    content=sample.decode(encoding),
+                    truncated=truncated,
+                    encoding=encoding,
+                    mime=mime,
+                    error=None,
+                )
+            except UnicodeDecodeError:
+                continue
+
+        return FileSearchHandler._preview_payload(
+            str(file_path),
+            content=sample.decode("utf-8", errors="replace"),
+            truncated=truncated,
+            encoding="utf-8-replace",
+            mime=mime,
+            error=None,
+        )
+
     @staticmethod
     def _collect_children_items(folder_path: Path):
         typed_items = []
@@ -1126,23 +1373,33 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             return "<div class='empty'>該当するフォルダが見つかりませんでした。</div>"
         lines = [
             "<table class='result-table'>",
-            "<thead><tr><th>親フォルダ</th><th>フォルダ</th></tr></thead>",
+            "<thead><tr><th>親フォルダ/フォルダ</th></tr></thead>",
             "<tbody>",
         ]
         for row in rows:
             parent_name = Path(row.parent_path).name or row.parent_path
             row_path = html.escape(row.path, quote=True)
+            folder_label = f"{html.escape(parent_name)}/{cls._highlight_text(row.name, query)}"
             lines.append(
                 f"<tr data-row-path='{row_path}' data-root-id='{row.root_id}'>"
-                f"<td><a class='parent-folder-name' data-folder-path='{html.escape(row.parent_path, quote=True)}' href='#'>{html.escape(parent_name)}</a></td>"
                 "<td>"
                 "<div class='folder-cell'>"
-                f"<a class='folder-name' data-expand-toggle='1' data-expanded='false' data-root-id='{row.root_id}' data-expand-path='{row_path}' href='#'>{cls._highlight_text(row.name, query)}</a>"
+                f"<a class='folder-name' data-expand-toggle='1' data-expanded='false' data-root-id='{row.root_id}' data-expand-path='{row_path}' href='#'>{folder_label}</a>"
                 "</div>"
                 "</td>"
                 "</tr>"
-                "<tr class='result-detail-row' data-expand-row='1' hidden>"
-                "<td colspan='2'><div data-child-panel='1'></div></td>"
+                f"<tr class='result-detail-row' data-expand-row='1' data-root-id='{row.root_id}' hidden>"
+                "<td colspan='1'>"
+                "<div class='detail-shell'>"
+                "<div class='detail-toolbar'>"
+                f"<button type='button' class='folder-open-button' data-open-folder-path='{row_path}' title='フォルダを開く' aria-label='フォルダを開く'>↗</button>"
+                "</div>"
+                "<div class='detail-grid'>"
+                "<div class='children-panel' data-child-panel='1'></div>"
+                "<div class='preview-panel' data-preview-panel='1'><div class='preview-empty'>ファイルを選択するとここにプレビューを表示します。</div></div>"
+                "</div>"
+                "</div>"
+                "</td>"
                 "</tr>"
             )
         lines.append("</tbody></table>")

@@ -227,7 +227,9 @@ class WebUiTests(unittest.TestCase):
         restore_block = CLIENT_SCRIPT.split("const restoreQueryFocus = function () {", 1)[1].split("};", 1)[0]
         self.assertNotIn("!queryInput.value", restore_block)
         self.assertIn('fetch("/children?" + query.toString()', CLIENT_SCRIPT)
+        self.assertIn('fetch("/preview?" + query.toString()', CLIENT_SCRIPT)
         self.assertIn("data-expand-toggle", CLIENT_SCRIPT)
+        self.assertIn("data-open-folder-path", CLIENT_SCRIPT)
 
     def test_parse_search_inputs(self):
         root_id, query = FileSearchHandler._parse_search_inputs("root_id=12&q=Project")
@@ -250,14 +252,18 @@ class WebUiTests(unittest.TestCase):
             match_kind = "name"
 
         html_doc = FileSearchHandler.render_results([Row()], "Project")
-        self.assertIn("<mark>Project</mark>Docs", html_doc)
+        self.assertIn("/<mark>Project</mark>Docs", html_doc)
         self.assertNotIn("/tmp/<mark>Project</mark>Docs", html_doc)
         self.assertIn("data-row-path='/tmp/ProjectDocs'", html_doc)
         self.assertIn("data-expand-toggle='1'", html_doc)
         self.assertIn("data-expand-path='/tmp/ProjectDocs'", html_doc)
+        self.assertIn("data-open-folder-path='/tmp/ProjectDocs'", html_doc)
         self.assertIn("class='result-detail-row'", html_doc)
         self.assertIn("data-child-panel='1'", html_doc)
-        self.assertIn("<thead><tr><th>親フォルダ</th><th>フォルダ</th></tr></thead>", html_doc)
+        self.assertIn("data-preview-panel='1'", html_doc)
+        self.assertIn("colspan='1'", html_doc)
+        self.assertIn("<thead><tr><th>親フォルダ/フォルダ</th></tr></thead>", html_doc)
+        self.assertNotIn("<th>親フォルダ</th><th>フォルダ</th>", html_doc)
         self.assertNotIn("<th>パス</th>", html_doc)
         self.assertNotIn("<th>操作</th>", html_doc)
         self.assertNotIn("<td><div class='path'>", html_doc)
@@ -488,6 +494,129 @@ class WebUiTests(unittest.TestCase):
         self.assertIn("not a directory", file_body["error"])
         self.assertEqual(missing_target_captured["status"], 404)
         self.assertIn("Path not found", missing_target_body["error"])
+
+    def test_handle_preview_returns_text_prefix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            root_dir = base / "Root"
+            root_dir.mkdir()
+            file_path = root_dir / "note.txt"
+            file_path.write_text("hello preview", encoding="utf-8")
+
+            db_path = base / "index.db"
+            conn = connect_db(db_path)
+            try:
+                ensure_db(conn)
+                root = add_root(conn, "Root", root_dir)
+                conn.commit()
+            finally:
+                conn.close()
+
+            handler = object.__new__(FileSearchHandler)
+            handler.db_path = str(db_path)
+            captured = {}
+            handler.send_response = lambda status: captured.setdefault("status", status)
+            handler.send_header = lambda key, value: captured.setdefault(key, value)
+            handler.end_headers = lambda: captured.setdefault("ended", True)
+            handler.wfile = io.BytesIO()
+
+            query = urlencode({"root_id": root.id, "path": str(file_path)})
+            FileSearchHandler._handle_preview(handler, urlparse(f"/preview?{query}"))
+            body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(body["content"], "hello preview")
+        self.assertFalse(body["truncated"])
+        self.assertEqual(body["encoding"], "utf-8")
+        self.assertEqual(body["error"], None)
+
+    def test_handle_preview_truncates_large_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            root_dir = base / "Root"
+            root_dir.mkdir()
+            file_path = root_dir / "large.txt"
+            file_path.write_text("a" * (16 * 1024 + 10), encoding="utf-8")
+
+            db_path = base / "index.db"
+            conn = connect_db(db_path)
+            try:
+                ensure_db(conn)
+                root = add_root(conn, "Root", root_dir)
+                conn.commit()
+            finally:
+                conn.close()
+
+            handler = object.__new__(FileSearchHandler)
+            handler.db_path = str(db_path)
+            captured = {}
+            handler.send_response = lambda status: captured.setdefault("status", status)
+            handler.send_header = lambda key, value: captured.setdefault(key, value)
+            handler.end_headers = lambda: captured.setdefault("ended", True)
+            handler.wfile = io.BytesIO()
+
+            query = urlencode({"root_id": root.id, "path": str(file_path)})
+            FileSearchHandler._handle_preview(handler, urlparse(f"/preview?{query}"))
+            body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(len(body["content"]), 16 * 1024)
+        self.assertTrue(body["truncated"])
+
+    def test_read_preview_reports_binary_files_without_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            file_path = pathlib.Path(tmp) / "sample.bin"
+            file_path.write_bytes(b"\x00\x01binary")
+            body = FileSearchHandler._read_preview(file_path)
+
+        self.assertEqual(body["content"], "")
+        self.assertEqual(body["encoding"], "binary")
+        self.assertIn("バイナリファイル", body["error"])
+
+    def test_handle_preview_rejects_missing_non_file_outside_and_not_found(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            root_dir = base / "Root"
+            outside_dir = base / "Outside"
+            root_dir.mkdir()
+            outside_dir.mkdir()
+            outside_file = outside_dir / "outside.txt"
+            outside_file.write_text("x", encoding="utf-8")
+
+            db_path = base / "index.db"
+            conn = connect_db(db_path)
+            try:
+                ensure_db(conn)
+                root = add_root(conn, "Root", root_dir)
+                conn.commit()
+            finally:
+                conn.close()
+
+            def call_preview(query_params):
+                handler = object.__new__(FileSearchHandler)
+                handler.db_path = str(db_path)
+                captured = {}
+                handler.send_response = lambda status: captured.setdefault("status", status)
+                handler.send_header = lambda key, value: captured.setdefault(key, value)
+                handler.end_headers = lambda: captured.setdefault("ended", True)
+                handler.wfile = io.BytesIO()
+                query = urlencode(query_params)
+                FileSearchHandler._handle_preview(handler, urlparse(f"/preview?{query}"))
+                return captured["status"], json.loads(handler.wfile.getvalue().decode("utf-8"))
+
+            missing_path_status, missing_path_body = call_preview({"root_id": root.id})
+            non_file_status, non_file_body = call_preview({"root_id": root.id, "path": str(root_dir)})
+            outside_status, outside_body = call_preview({"root_id": root.id, "path": str(outside_file)})
+            not_found_status, not_found_body = call_preview({"root_id": root.id, "path": str(root_dir / "missing.txt")})
+
+        self.assertEqual(missing_path_status, 400)
+        self.assertIn("path is required", missing_path_body["error"])
+        self.assertEqual(non_file_status, 400)
+        self.assertIn("not a file", non_file_body["error"])
+        self.assertEqual(outside_status, 403)
+        self.assertIn("outside root", outside_body["error"])
+        self.assertEqual(not_found_status, 404)
+        self.assertIn("Path not found", not_found_body["error"])
 
     def test_open_path_in_file_manager_uses_startfile_on_windows(self):
         with mock.patch("web_app.sys.platform", "win32"):
