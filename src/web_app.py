@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import closing
+from datetime import datetime
 import errno
 import html
 import json
@@ -183,6 +184,15 @@ h1 {
   gap: 0.3rem;
 }
 .field-grow { flex: 1 1 22rem; }
+.search-input-group { display: flex; }
+.search-input-group #q {
+  border-radius: 5px 0 0 5px;
+  border-right: none;
+}
+.search-input-group button {
+  border-radius: 0 5px 5px 0;
+  white-space: nowrap;
+}
 label {
   font-weight: 600;
   font-size: 0.8125rem;
@@ -249,13 +259,14 @@ table {
   font-size: 0.875rem;
 }
 thead th {
-  background: var(--text-strong);
-  color: var(--button-text);
+  background: var(--surface-muted);
+  color: var(--text-muted);
   padding: 0.6rem 0.75rem;
   text-align: left;
   font-size: 0.8125rem;
   font-weight: 600;
   white-space: nowrap;
+  border-bottom: 1px solid var(--border-color);
 }
 tbody td {
   border-top: 1px solid var(--border-row);
@@ -278,6 +289,9 @@ tbody tr:hover { background: var(--surface-hover); }
 .folder-name[data-expanded="true"] {
   background-color: var(--surface-hover);
 }
+tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
+  border-left: 2px solid var(--accent-color);
+}
 .detail-shell {
   display: grid;
   gap: 0.55rem;
@@ -287,14 +301,15 @@ tbody tr:hover { background: var(--surface-hover); }
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 1.7rem;
+  width: auto;
   height: 1.7rem;
-  padding: 0;
+  padding: 0.3rem 0.65rem;
   border: 1px solid var(--border-button);
   border-radius: 5px;
   background: var(--nav-bg);
   color: var(--link-color);
-  font-size: 0.95rem;
+  font-size: 0.78rem;
+  font-weight: 600;
   line-height: 1;
 }
 .folder-open-button:hover { background: var(--surface-hover); }
@@ -512,6 +527,13 @@ tbody tr:hover { background: var(--surface-hover); }
   white-space: nowrap;
 }
 .actions form { margin: 0; }
+.root-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+}
+.root-actions form { margin: 0; }
 mark {
   background: var(--mark-bg);
   color: var(--mark-text);
@@ -561,10 +583,12 @@ SEARCH_PAGE_TEMPLATE = Template("""<!doctype html>
         <label for="root_id">検索対象</label>
         <select id="root_id" name="root_id">$root_options</select>
       </div>
-      <div class="field">
-        <input id="q" type="text" name="q" value="$query" placeholder="キーワードを入力してください。" autocomplete="off" aria-label="キーワード" />
+      <div class="field field-grow">
+        <div class="search-input-group">
+          <input id="q" type="text" name="q" value="$query" placeholder="キーワードを入力" autocomplete="off" aria-label="キーワード" />
+          <button type="submit">検索</button>
+        </div>
       </div>
-      <button type="submit">検索</button>
     </div>
   </form>
   $meta_html
@@ -1561,12 +1585,13 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             parent_name = Path(row.parent_path).name or row.parent_path
             row_path = html.escape(row.path, quote=True)
             folder_label = f"{html.escape(parent_name)}/{cls._highlight_text(row.name, query)}"
+            open_label = "Finder で開く" if sys.platform == "darwin" else "フォルダを開く"
             lines.append(
                 f"<tr data-row-path='{row_path}' data-root-id='{row.root_id}'>"
                 "<td>"
                 "<div class='folder-cell'>"
                 f"<a class='folder-name' data-expand-toggle='1' data-expanded='false' data-root-id='{row.root_id}' data-expand-path='{row_path}' href='#'>{folder_label}</a>"
-                f"<button type='button' class='folder-open-button' data-open-folder-path='{row_path}' title='フォルダを開く' aria-label='フォルダを開く'>↗</button>"
+                f"<button type='button' class='folder-open-button' data-open-folder-path='{row_path}' aria-label='{open_label}'>{open_label}</button>"
                 "</div>"
                 "</td>"
                 "</tr>"
@@ -1599,13 +1624,13 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             "<tbody>",
         ]
         for root in roots:
-            scanned = root.last_scanned_at or "未スキャン"
+            scanned = FileSearchHandler._format_scan_time(root.last_scanned_at)
             actions = (
-                "<div class='actions'>"
+                "<div class='root-actions'>"
                 "<form method='post' action='/settings/action'>"
                 f"<input type='hidden' name='root_id' value='{root.id}' />"
                 "<input type='hidden' name='action' value='rescan_root' />"
-                "<button type='submit' class='button-secondary'>再スキャン</button>"
+                "<button type='submit' class='button-secondary'>リロード</button>"
                 "</form>"
                 "<form method='post' action='/settings/action'>"
                 f"<input type='hidden' name='root_id' value='{root.id}' />"
@@ -1624,6 +1649,16 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             )
         lines.append("</tbody></table>")
         return "\n".join(lines)
+
+    @staticmethod
+    def _format_scan_time(scanned_at: str) -> str:
+        if not scanned_at:
+            return "未スキャン"
+        try:
+            parsed = datetime.fromisoformat(scanned_at.replace("Z", "+00:00"))
+            return parsed.strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            return scanned_at[:16].replace("T", " ")
 
 
 class FileSearchServer(ThreadingHTTPServer):
