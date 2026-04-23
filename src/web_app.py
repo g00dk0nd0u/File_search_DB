@@ -300,7 +300,7 @@ tbody tr:hover { background: var(--surface-hover); }
 .folder-open-button:hover { background: var(--surface-hover); }
 .detail-grid {
   display: grid;
-  grid-template-columns: minmax(12rem, max-content) minmax(16rem, 1fr);
+  grid-template-columns: minmax(18rem, max-content) minmax(16rem, 1fr);
   gap: 0.75rem;
   align-items: start;
 }
@@ -313,9 +313,10 @@ tbody tr:hover { background: var(--surface-hover); }
   padding: 0.55rem 0.65rem;
 }
 .children-panel {
-  width: 18rem;
+  min-width: 18rem;
+  width: max-content;
   max-width: 100%;
-  overflow-x: auto;
+  overflow-x: visible;
 }
 .children-list {
   list-style: none;
@@ -338,9 +339,53 @@ tbody tr:hover { background: var(--surface-hover); }
   white-space: nowrap;
 }
 .children-icon {
-  flex: 0 0 1.25rem;
-  width: 1.25rem;
-  text-align: center;
+  position: relative;
+  flex: 0 0 1rem;
+  width: 1rem;
+  height: 1rem;
+  color: var(--text-subtle);
+}
+.children-icon.is-dir::before {
+  content: "";
+  position: absolute;
+  left: 0.05rem;
+  top: 0.27rem;
+  width: 0.9rem;
+  height: 0.6rem;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+}
+.children-icon.is-dir::after {
+  content: "";
+  position: absolute;
+  left: 0.12rem;
+  top: 0.15rem;
+  width: 0.38rem;
+  height: 0.24rem;
+  border: 1.5px solid currentColor;
+  border-bottom: 0;
+  border-radius: 2px 2px 0 0;
+}
+.children-icon.is-file::before {
+  content: "";
+  position: absolute;
+  left: 0.17rem;
+  top: 0.08rem;
+  width: 0.68rem;
+  height: 0.84rem;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+}
+.children-icon.is-file::after {
+  content: "";
+  position: absolute;
+  right: 0.15rem;
+  top: 0.08rem;
+  width: 0.28rem;
+  height: 0.28rem;
+  border-left: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  background: var(--surface-color);
 }
 .children-name {
   white-space: nowrap;
@@ -440,6 +485,7 @@ tbody tr:hover { background: var(--surface-hover); }
   }
   .children-panel {
     width: 100%;
+    min-width: 0;
   }
 }
 .path {
@@ -767,9 +813,8 @@ document.addEventListener("DOMContentLoaded", function () {
       link.setAttribute("data-child-type", item.type || "");
 
       const icon = document.createElement("span");
-      icon.className = "children-icon";
+      icon.className = item.type === "dir" ? "children-icon is-dir" : "children-icon is-file";
       icon.setAttribute("aria-hidden", "true");
-      icon.textContent = item.type === "dir" ? "📁" : "📄";
       link.appendChild(icon);
 
       const name = document.createElement("span");
