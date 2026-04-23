@@ -282,14 +282,11 @@ tbody tr:hover { background: var(--surface-hover); }
   display: grid;
   gap: 0.55rem;
 }
-.detail-toolbar {
-  display: flex;
-  justify-content: flex-end;
-}
 .folder-open-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 auto;
   width: 1.7rem;
   height: 1.7rem;
   padding: 0;
@@ -303,8 +300,9 @@ tbody tr:hover { background: var(--surface-hover); }
 .folder-open-button:hover { background: var(--surface-hover); }
 .detail-grid {
   display: grid;
-  grid-template-columns: minmax(12rem, 0.9fr) minmax(16rem, 1.4fr);
+  grid-template-columns: minmax(12rem, max-content) minmax(16rem, 1fr);
   gap: 0.75rem;
+  align-items: start;
 }
 .children-panel,
 .preview-panel {
@@ -314,6 +312,11 @@ tbody tr:hover { background: var(--surface-hover); }
   background: var(--surface-color);
   padding: 0.55rem 0.65rem;
 }
+.children-panel {
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+}
 .children-list {
   list-style: none;
   margin: 0;
@@ -322,22 +325,14 @@ tbody tr:hover { background: var(--surface-hover); }
 .children-item {
   display: flex;
   align-items: baseline;
-  gap: 0.48rem;
   padding: 0.12rem 0;
   line-height: 1.35;
-}
-.children-kind {
-  min-width: 2.25rem;
-  color: var(--text-subtle);
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
 }
 .children-link {
   color: var(--link-color);
   text-decoration: none;
   font-weight: 500;
-  word-break: break-all;
+  white-space: nowrap;
 }
 .children-link:hover {
   text-decoration: underline;
@@ -412,7 +407,7 @@ tbody tr:hover { background: var(--surface-hover); }
 .folder-cell {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: space-between;
   gap: 0.75rem;
 }
 .folder-main {
@@ -421,9 +416,19 @@ tbody tr:hover { background: var(--surface-hover); }
 .open-icon-button {
   display: none;
 }
+.result-count {
+  display: inline-flex;
+  margin-left: 0.75rem;
+  color: var(--button-text);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
 @media (max-width: 720px) {
   .detail-grid {
     grid-template-columns: 1fr;
+  }
+  .children-panel {
+    width: 100%;
   }
 }
 .path {
@@ -744,11 +749,6 @@ document.addEventListener("DOMContentLoaded", function () {
       const row = document.createElement("li");
       row.className = "children-item";
 
-      const kind = document.createElement("span");
-      kind.className = "children-kind";
-      kind.textContent = item.type === "dir" ? "DIR" : "FILE";
-      row.appendChild(kind);
-
       const link = document.createElement("a");
       link.className = "children-link";
       link.href = "#";
@@ -760,22 +760,6 @@ document.addEventListener("DOMContentLoaded", function () {
       list.appendChild(row);
     });
     panel.appendChild(list);
-  };
-
-  let expandedDetailRow = null;
-  const closeExpandedRow = function () {
-    if (!expandedDetailRow) {
-      return;
-    }
-    const ownerRow = expandedDetailRow.previousElementSibling;
-    if (ownerRow) {
-      const ownerToggle = ownerRow.querySelector("[data-expand-toggle]");
-      if (ownerToggle) {
-        ownerToggle.setAttribute("data-expanded", "false");
-      }
-    }
-    expandedDetailRow.hidden = true;
-    expandedDetailRow = null;
   };
 
   document.addEventListener("click", async function (event) {
@@ -838,16 +822,11 @@ document.addEventListener("DOMContentLoaded", function () {
     if (detailRow.hidden === false) {
       toggleLink.setAttribute("data-expanded", "false");
       detailRow.hidden = true;
-      if (expandedDetailRow === detailRow) {
-        expandedDetailRow = null;
-      }
       return;
     }
 
-    closeExpandedRow();
     toggleLink.setAttribute("data-expanded", "true");
     detailRow.hidden = false;
-    expandedDetailRow = detailRow;
 
     const rootId = toggleLink.getAttribute("data-root-id") || "";
     const folderPath = toggleLink.getAttribute("data-expand-path") || "";
@@ -1003,6 +982,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         roots, selected_root_id = self._load_roots(root_id)
         rows = []
         message = ""
+        result_message = ""
 
         if not roots:
             message = ""
@@ -1017,7 +997,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             else:
                 with closing(conn):
                     rows = search_folders(conn, selected_root_id, query)
-                message = f"{len(rows)}件ヒット"
+                result_message = f"{len(rows)}件ヒット"
 
         body = SEARCH_PAGE_TEMPLATE.safe_substitute(
             theme_script=THEME_SCRIPT,
@@ -1026,7 +1006,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             root_options=self._render_root_options(roots, selected_root_id),
             query=html.escape(query),
             meta_html=self._render_meta(message),
-            results="" if not roots or not query else self.render_results(rows, query),
+            results="" if not roots or not query else self.render_results(rows, query, result_message),
         ).encode("utf-8")
         self._send_html(body)
 
@@ -1501,12 +1481,13 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         return "".join(parts)
 
     @classmethod
-    def render_results(cls, rows, query: str) -> str:
+    def render_results(cls, rows, query: str, result_message: str = "") -> str:
         if not rows:
             return "<div class='empty'>該当するフォルダが見つかりませんでした。</div>"
+        count_html = f"<span class='result-count'>{html.escape(result_message)}</span>" if result_message else ""
         lines = [
             "<table class='result-table'>",
-            "<thead><tr><th>親フォルダ/フォルダ</th></tr></thead>",
+            f"<thead><tr><th>親フォルダ/フォルダ{count_html}</th></tr></thead>",
             "<tbody>",
         ]
         for row in rows:
@@ -1518,15 +1499,13 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                 "<td>"
                 "<div class='folder-cell'>"
                 f"<a class='folder-name' data-expand-toggle='1' data-expanded='false' data-root-id='{row.root_id}' data-expand-path='{row_path}' href='#'>{folder_label}</a>"
+                f"<button type='button' class='folder-open-button' data-open-folder-path='{row_path}' title='フォルダを開く' aria-label='フォルダを開く'>↗</button>"
                 "</div>"
                 "</td>"
                 "</tr>"
                 f"<tr class='result-detail-row' data-expand-row='1' data-root-id='{row.root_id}' hidden>"
                 "<td colspan='1'>"
                 "<div class='detail-shell'>"
-                "<div class='detail-toolbar'>"
-                f"<button type='button' class='folder-open-button' data-open-folder-path='{row_path}' title='フォルダを開く' aria-label='フォルダを開く'>↗</button>"
-                "</div>"
                 "<div class='detail-grid'>"
                 "<div class='children-panel' data-child-panel='1'></div>"
                 "<div class='preview-panel' data-preview-panel='1'><div class='preview-empty'>ファイルを選択するとここにプレビューを表示します。</div></div>"
