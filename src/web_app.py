@@ -313,7 +313,7 @@ tbody tr:hover { background: var(--surface-hover); }
   padding: 0.55rem 0.65rem;
 }
 .children-panel {
-  width: max-content;
+  width: 18rem;
   max-width: 100%;
   overflow-x: auto;
 }
@@ -329,9 +329,20 @@ tbody tr:hover { background: var(--surface-hover); }
   line-height: 1.35;
 }
 .children-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   color: var(--link-color);
   text-decoration: none;
   font-weight: 500;
+  white-space: nowrap;
+}
+.children-icon {
+  flex: 0 0 1.25rem;
+  width: 1.25rem;
+  text-align: center;
+}
+.children-name {
   white-space: nowrap;
 }
 .children-link:hover {
@@ -754,7 +765,18 @@ document.addEventListener("DOMContentLoaded", function () {
       link.href = "#";
       link.setAttribute("data-child-path", item.path || "");
       link.setAttribute("data-child-type", item.type || "");
-      link.textContent = item.type === "dir" ? "/" + (item.name || item.path || "(unknown)") : (item.name || item.path || "(unknown)");
+
+      const icon = document.createElement("span");
+      icon.className = "children-icon";
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent = item.type === "dir" ? "📁" : "📄";
+      link.appendChild(icon);
+
+      const name = document.createElement("span");
+      name.className = "children-name";
+      name.textContent = item.type === "dir" ? "/" + (item.name || item.path || "(unknown)") : (item.name || item.path || "(unknown)");
+      link.appendChild(name);
+
       row.appendChild(link);
 
       list.appendChild(row);
