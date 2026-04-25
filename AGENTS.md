@@ -2,11 +2,11 @@
 
 ## Final response rule
 
-修正・実装・リファクタリングを行った場合、最後に必ず以下の形式でコミット用メッセージを提示してください。
+If you make any fix, implementation, or refactor, always include a commit message at the end using the following format.
 
-コミット用メッセージ:
-<変更内容を簡潔に表す日本語1行>
+Commit message:
+<one concise Japanese line describing the change>
 
-例:
-コミット用メッセージ:
+Example:
+Commit message:
 フォルダ表示と検索UIの英語表記を統一
