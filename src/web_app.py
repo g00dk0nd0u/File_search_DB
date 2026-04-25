@@ -182,6 +182,9 @@ h1 {
 .search-row {
   justify-content: space-between;
 }
+.settings-form {
+  justify-content: space-between;
+}
 .field {
   display: grid;
   gap: 0.3rem;
@@ -640,15 +643,6 @@ SETTINGS_PAGE_TEMPLATE = Template("""<!doctype html>
   <style>$base_css</style>
 </head>
 <body>
-  <div class="page-header">
-    <h1>Folder Manager</h1>
-    <div class="header-actions">
-      <button type="button" class="theme-toggle" data-theme-toggle aria-label="Toggle theme" title="Switch to dark mode">
-        <span class="theme-toggle-icon" aria-hidden="true">☾</span>
-      </button>
-      <a class="nav-link" href="/">Back to Search</a>
-    </div>
-  </div>
   <div class="panel">
     <form method="post" action="/settings/action" class="settings-form">
       <input type="hidden" name="action" value="choose_root" />
@@ -657,6 +651,12 @@ SETTINGS_PAGE_TEMPLATE = Template("""<!doctype html>
         <input id="display_name" type="text" name="display_name" placeholder="Example: Company Server" />
       </div>
       <button type="submit">Choose Folder</button>
+      <div class="search-tools">
+        <button type="button" class="theme-toggle" data-theme-toggle aria-label="Toggle theme" title="Switch to dark mode">
+          <span class="theme-toggle-icon" aria-hidden="true">☾</span>
+        </button>
+        <a class="nav-link" href="/">Back to Search</a>
+      </div>
     </form>
   </div>
   $notice
