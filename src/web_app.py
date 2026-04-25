@@ -488,6 +488,15 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
   border-radius: 6px;
   background: var(--surface-soft);
 }
+.image-preview {
+  display: block;
+  max-width: 100%;
+  max-height: 34rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--surface-soft);
+  object-fit: contain;
+}
 .pdf-fallback-link {
   display: inline-flex;
   margin-top: 0.45rem;
@@ -815,6 +824,27 @@ document.addEventListener("DOMContentLoaded", function () {
     return String(path || "").toLowerCase().endsWith(".pdf");
   };
 
+  const isImageMime = function (mime) {
+    return String(mime || "").toLowerCase().startsWith("image/");
+  };
+
+  const isOfficeMime = function (mime, path) {
+    const normalizedMime = String(mime || "").toLowerCase();
+    const normalizedPath = String(path || "").toLowerCase();
+    return (
+      normalizedMime === "application/msword" ||
+      normalizedMime === "application/vnd.ms-excel" ||
+      normalizedMime === "application/vnd.ms-powerpoint" ||
+      normalizedMime.indexOf("application/vnd.openxmlformats-officedocument") === 0 ||
+      normalizedPath.endsWith(".doc") ||
+      normalizedPath.endsWith(".docx") ||
+      normalizedPath.endsWith(".xls") ||
+      normalizedPath.endsWith(".xlsx") ||
+      normalizedPath.endsWith(".ppt") ||
+      normalizedPath.endsWith(".pptx")
+    );
+  };
+
   const buildFileUrl = function (rootId, path) {
     const query = new URLSearchParams({ root_id: rootId, path: path });
     return "/file?" + query.toString();
@@ -840,6 +870,47 @@ document.addEventListener("DOMContentLoaded", function () {
     fallback.target = "_blank";
     fallback.rel = "noopener";
     fallback.textContent = "Open PDF in new tab";
+    panel.appendChild(fallback);
+  };
+
+  const renderImagePreview = function (panel, rootId, path, mime) {
+    panel.textContent = "";
+    const meta = document.createElement("div");
+    meta.className = "preview-meta";
+    meta.textContent = (path.split(/[\\\\/]/).pop() || path) + (mime ? " / " + mime : "");
+    panel.appendChild(meta);
+
+    const fileUrl = buildFileUrl(rootId, path);
+    const image = document.createElement("img");
+    image.className = "image-preview";
+    image.src = fileUrl;
+    image.alt = path.split(/[\\\\/]/).pop() || path;
+    panel.appendChild(image);
+
+    const fallback = document.createElement("a");
+    fallback.className = "pdf-fallback-link";
+    fallback.href = fileUrl;
+    fallback.target = "_blank";
+    fallback.rel = "noopener";
+    fallback.textContent = "Open image in new tab";
+    panel.appendChild(fallback);
+  };
+
+  const renderOfficePreviewNote = function (panel, rootId, path, mime) {
+    panel.textContent = "";
+    const meta = document.createElement("div");
+    meta.className = "preview-meta";
+    meta.textContent = (path.split(/[\\\\/]/).pop() || path) + (mime ? " / " + mime : "");
+    panel.appendChild(meta);
+
+    renderPreviewMessage(panel, "Office files cannot be previewed directly in this browser. Open the file in a new tab or desktop app.", "preview-note");
+
+    const fallback = document.createElement("a");
+    fallback.className = "pdf-fallback-link";
+    fallback.href = buildFileUrl(rootId, path);
+    fallback.target = "_blank";
+    fallback.rel = "noopener";
+    fallback.textContent = "Open file";
     panel.appendChild(fallback);
   };
 
@@ -878,6 +949,14 @@ document.addEventListener("DOMContentLoaded", function () {
       }
       if (payload && payload.mime === "application/pdf") {
         renderPdfPreview(panel, rootId, path);
+        return;
+      }
+      if (payload && isImageMime(payload.mime)) {
+        renderImagePreview(panel, rootId, path, payload.mime);
+        return;
+      }
+      if (payload && isOfficeMime(payload.mime, path)) {
+        renderOfficePreviewNote(panel, rootId, path, payload.mime);
         return;
       }
 
@@ -1463,10 +1542,6 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         if not path.is_file():
             self.send_error(HTTPStatus.BAD_REQUEST, "Path is not a file")
             return
-        mime = mimetypes.guess_type(str(path))[0] or ""
-        if path.suffix.casefold() != ".pdf" and mime != "application/pdf":
-            self.send_error(HTTPStatus.BAD_REQUEST, "Only PDF files can be previewed")
-            return
 
         conn, warning = self._connect_existing_db()
         if conn is None:
@@ -1493,10 +1568,11 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.BAD_REQUEST, f"File cannot be read: {exc}")
             return
 
+        mime = mimetypes.guess_type(str(target_path))[0] or "application/octet-stream"
         self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "application/pdf")
+        self.send_header("Content-Type", mime)
         filename = quote(target_path.name, safe="")
-        self.send_header("Content-Disposition", f"inline; filename=\"preview.pdf\"; filename*=UTF-8''{filename}")
+        self.send_header("Content-Disposition", f"inline; filename=\"{target_path.name}\"; filename*=UTF-8''{filename}")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
