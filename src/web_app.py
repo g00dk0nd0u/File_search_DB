@@ -747,6 +747,62 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   };
 
+  const uiStateStorageKey = "file-search-db-ui-state:" + window.location.pathname + window.location.search;
+  const readUiState = function () {
+    try {
+      const raw = sessionStorage.getItem(uiStateStorageKey);
+      if (!raw) {
+        return { expandedPaths: [], selectedChildByFolder: {} };
+      }
+      const parsed = JSON.parse(raw);
+      return {
+        expandedPaths: Array.isArray(parsed.expandedPaths) ? parsed.expandedPaths : [],
+        selectedChildByFolder: parsed && typeof parsed.selectedChildByFolder === "object" && parsed.selectedChildByFolder ? parsed.selectedChildByFolder : {},
+      };
+    } catch (_error) {
+      return { expandedPaths: [], selectedChildByFolder: {} };
+    }
+  };
+
+  const writeUiState = function (state) {
+    try {
+      sessionStorage.setItem(uiStateStorageKey, JSON.stringify(state));
+    } catch (_error) {
+    }
+  };
+
+  const setFolderExpandedState = function (folderPath, expanded) {
+    if (!folderPath) {
+      return;
+    }
+    const state = readUiState();
+    state.expandedPaths = state.expandedPaths.filter(function (path) {
+      return path !== folderPath;
+    });
+    if (expanded) {
+      state.expandedPaths.push(folderPath);
+    } else {
+      delete state.selectedChildByFolder[folderPath];
+    }
+    writeUiState(state);
+  };
+
+  const setSelectedChildState = function (folderPath, childPath) {
+    if (!folderPath) {
+      return;
+    }
+    const state = readUiState();
+    if (childPath) {
+      state.selectedChildByFolder[folderPath] = childPath;
+      if (state.expandedPaths.indexOf(folderPath) === -1) {
+        state.expandedPaths.push(folderPath);
+      }
+    } else {
+      delete state.selectedChildByFolder[folderPath];
+    }
+    writeUiState(state);
+  };
+
   const renderPreviewMessage = function (panel, message, className) {
     panel.textContent = "";
     const messageElement = document.createElement("div");
@@ -794,6 +850,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     const detailRow = link.closest("[data-expand-row]");
+    const folderPath = detailRow ? detailRow.getAttribute("data-folder-path") || "" : "";
     if (detailRow) {
       detailRow.querySelectorAll(".children-link").forEach(function (otherLink) {
         otherLink.classList.remove("is-active");
@@ -803,6 +860,7 @@ document.addEventListener("DOMContentLoaded", function () {
       otherLink.classList.remove("is-active");
     });
     link.classList.add("is-active");
+    setSelectedChildState(folderPath, path);
 
     if (isPdfPath(path)) {
       renderPdfPreview(panel, rootId, path);
@@ -841,6 +899,51 @@ document.addEventListener("DOMContentLoaded", function () {
       panel.appendChild(pre);
     } catch (_error) {
       renderPreviewMessage(panel, "Could not load preview.", "preview-error");
+    }
+  };
+
+  const loadChildrenForDetail = async function (detailRow, folderPath, rootId, selectedChildPath) {
+    const panel = detailRow ? detailRow.querySelector("[data-child-panel]") : null;
+    const previewPanel = detailRow ? detailRow.querySelector("[data-preview-panel]") : null;
+    if (!detailRow || !rootId || !folderPath || !panel) {
+      return;
+    }
+
+    detailRow.setAttribute("data-folder-path", folderPath);
+    panel.textContent = "";
+    if (previewPanel) {
+      renderPreviewMessage(previewPanel, "Select a file to preview it here.", "preview-empty");
+    }
+    const loading = document.createElement("div");
+    loading.className = "children-loading";
+    loading.textContent = "Loading...";
+    panel.appendChild(loading);
+
+    const query = new URLSearchParams({ root_id: rootId, path: folderPath });
+    try {
+      const response = await fetch("/children?" + query.toString(), { method: "GET", cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok) {
+        const error = document.createElement("div");
+        error.className = "children-error";
+        error.textContent = payload && payload.error ? String(payload.error) : "Could not load items.";
+        panel.textContent = "";
+        panel.appendChild(error);
+        return;
+      }
+      renderChildrenItems(panel, payload);
+      if (selectedChildPath && previewPanel) {
+        const selectedLink = detailRow.querySelector('.children-link[data-child-path="' + CSS.escape(selectedChildPath) + '"]');
+        if (selectedLink) {
+          await loadPreview(selectedLink, previewPanel, rootId);
+        }
+      }
+    } catch (_error) {
+      const error = document.createElement("div");
+      error.className = "children-error";
+      error.textContent = "Could not load items.";
+      panel.textContent = "";
+      panel.appendChild(error);
     }
   };
 
@@ -943,6 +1046,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (detailRow.hidden === false) {
       toggleLink.setAttribute("data-expanded", "false");
       detailRow.hidden = true;
+      setFolderExpandedState(toggleLink.getAttribute("data-expand-path") || "", false);
       return;
     }
 
@@ -951,42 +1055,31 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const rootId = toggleLink.getAttribute("data-root-id") || "";
     const folderPath = toggleLink.getAttribute("data-expand-path") || "";
-    const panel = detailRow.querySelector("[data-child-panel]");
-    const previewPanel = detailRow.querySelector("[data-preview-panel]");
-    if (!rootId || !folderPath || !panel) {
+    if (!rootId || !folderPath) {
       return;
     }
-
-    panel.textContent = "";
-    if (previewPanel) {
-      renderPreviewMessage(previewPanel, "Select a file to preview it here.", "preview-empty");
-    }
-    const loading = document.createElement("div");
-    loading.className = "children-loading";
-    loading.textContent = "Loading...";
-    panel.appendChild(loading);
-
-    const query = new URLSearchParams({ root_id: rootId, path: folderPath });
-    try {
-      const response = await fetch("/children?" + query.toString(), { method: "GET", cache: "no-store" });
-      const payload = await response.json();
-      if (!response.ok) {
-        const error = document.createElement("div");
-        error.className = "children-error";
-        error.textContent = payload && payload.error ? String(payload.error) : "Could not load items.";
-        panel.textContent = "";
-        panel.appendChild(error);
-        return;
-      }
-      renderChildrenItems(panel, payload);
-    } catch (_error) {
-      const error = document.createElement("div");
-      error.className = "children-error";
-      error.textContent = "Could not load items.";
-      panel.textContent = "";
-      panel.appendChild(error);
-    }
+    setFolderExpandedState(folderPath, true);
+    await loadChildrenForDetail(detailRow, folderPath, rootId, readUiState().selectedChildByFolder[folderPath] || "");
   });
+
+  const restoreUiState = async function () {
+    const state = readUiState();
+    for (const folderPath of state.expandedPaths) {
+      const toggleLink = document.querySelector('[data-expand-toggle][data-expand-path="' + CSS.escape(folderPath) + '"]');
+      if (!toggleLink) {
+        continue;
+      }
+      const row = toggleLink.closest("tr[data-row-path]");
+      const detailRow = row ? row.nextElementSibling : null;
+      if (!row || !detailRow || !detailRow.hasAttribute("data-expand-row")) {
+        continue;
+      }
+      toggleLink.setAttribute("data-expanded", "true");
+      detailRow.hidden = false;
+      const rootId = toggleLink.getAttribute("data-root-id") || "";
+      await loadChildrenForDetail(detailRow, folderPath, rootId, state.selectedChildByFolder[folderPath] || "");
+    }
+  };
 
   const form = document.querySelector(".search-form");
   const queryInput = document.getElementById("q");
@@ -994,6 +1087,7 @@ document.addEventListener("DOMContentLoaded", function () {
   if (!form || !queryInput || !rootSelect) {
     return;
   }
+  restoreUiState();
 
   const restoreQueryFocus = function () {
     window.requestAnimationFrame(function () {
