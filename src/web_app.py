@@ -647,7 +647,6 @@ SETTINGS_PAGE_TEMPLATE = Template("""<!doctype html>
     <form method="post" action="/settings/action" class="settings-form">
       <input type="hidden" name="action" value="choose_root" />
       <div class="field">
-        <label for="display_name">Display Name</label>
         <input id="display_name" type="text" name="display_name" placeholder="Example: Company Server" />
       </div>
       <button type="submit">Choose Folder</button>
