@@ -563,13 +563,13 @@ SEARCH_PAGE_TEMPLATE = Template("""<!doctype html>
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <title>ファイル/フォルダ置き場検索</title>
+  <title>Folder Search</title>
   <script>$theme_script</script>
   <style>$base_css</style>
 </head>
 <body>
   <div class="page-header">
-    <h1>ファイル/フォルダ置き場検索</h1>
+    <h1>Folder Search</h1>
     <div class="header-actions">
       <button type="button" class="theme-toggle" data-theme-toggle aria-label="テーマ切替" title="ダークモードに切替">
         <span class="theme-toggle-icon" aria-hidden="true">☾</span>
@@ -580,13 +580,13 @@ SEARCH_PAGE_TEMPLATE = Template("""<!doctype html>
   <form method="get" action="/" class="search-form">
     <div class="search-row">
       <div class="field">
-        <label for="root_id">検索対象</label>
+        <label for="root_id">Search Target</label>
         <select id="root_id" name="root_id">$root_options</select>
       </div>
       <div class="field field-grow">
         <div class="search-input-group">
-          <input id="q" type="text" name="q" value="$query" placeholder="キーワードを入力" autocomplete="off" aria-label="キーワード" />
-          <button type="submit">検索</button>
+          <input id="q" type="text" name="q" value="$query" placeholder="Enter keyword" autocomplete="off" aria-label="Keyword" />
+          <button type="submit">Search</button>
         </div>
       </div>
     </div>
@@ -605,28 +605,28 @@ SETTINGS_PAGE_TEMPLATE = Template("""<!doctype html>
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <title>検索対象フォルダ管理</title>
+  <title>Folder Manager</title>
   <script>$theme_script</script>
   <style>$base_css</style>
 </head>
 <body>
   <div class="page-header">
-    <h1>検索対象フォルダ管理</h1>
+    <h1>Folder Manager</h1>
     <div class="header-actions">
       <button type="button" class="theme-toggle" data-theme-toggle aria-label="テーマ切替" title="ダークモードに切替">
         <span class="theme-toggle-icon" aria-hidden="true">☾</span>
       </button>
-      <a class="nav-link" href="/">検索へ戻る</a>
+      <a class="nav-link" href="/">Back to Search</a>
     </div>
   </div>
   <div class="panel">
     <form method="post" action="/settings/action" class="settings-form">
       <input type="hidden" name="action" value="choose_root" />
       <div class="field">
-        <label for="display_name">表示名</label>
-        <input id="display_name" type="text" name="display_name" placeholder="例: 会社サーバー" />
+        <label for="display_name">Display Name</label>
+        <input id="display_name" type="text" name="display_name" placeholder="Example: Company Server" />
       </div>
-      <button type="submit">Open</button>
+      <button type="submit">Choose Folder</button>
     </form>
   </div>
   $notice
@@ -1578,14 +1578,14 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         count_html = f"<span class='result-count'>{html.escape(result_message)}</span>" if result_message else ""
         lines = [
             "<table class='result-table'>",
-            f"<thead><tr><th>親フォルダ/フォルダ{count_html}</th></tr></thead>",
+            f"<thead><tr><th>Parent Folder / Folder{count_html}</th></tr></thead>",
             "<tbody>",
         ]
         for row in rows:
             parent_name = Path(row.parent_path).name or row.parent_path
             row_path = html.escape(row.path, quote=True)
             folder_label = f"{html.escape(parent_name)}/{cls._highlight_text(row.name, query)}"
-            open_label = "Finder で開く" if sys.platform == "darwin" else "フォルダを開く"
+            open_label = "Open in Finder" if sys.platform == "darwin" else "Open Folder"
             lines.append(
                 f"<tr data-row-path='{row_path}' data-root-id='{row.root_id}'>"
                 "<td>"
@@ -1620,7 +1620,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
 
         lines = [
             "<table>",
-            "<thead><tr><th>表示名</th><th>パス</th><th>状態</th><th>操作</th></tr></thead>",
+            "<thead><tr><th>Display Name</th><th>Path</th><th>Status</th><th>Actions</th></tr></thead>",
             "<tbody>",
         ]
         for root in roots:
@@ -1630,12 +1630,12 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                 "<form method='post' action='/settings/action'>"
                 f"<input type='hidden' name='root_id' value='{root.id}' />"
                 "<input type='hidden' name='action' value='rescan_root' />"
-                "<button type='submit' class='button-secondary'>リロード</button>"
+                "<button type='submit' class='button-secondary'>Reload</button>"
                 "</form>"
                 "<form method='post' action='/settings/action'>"
                 f"<input type='hidden' name='root_id' value='{root.id}' />"
                 "<input type='hidden' name='action' value='delete_root' />"
-                "<button type='submit' class='button-danger'>削除</button>"
+                "<button type='submit' class='button-danger'>Delete</button>"
                 "</form>"
                 "</div>"
             )
