@@ -10,3 +10,8 @@ Commit message:
 Example:
 Commit message:
 フォルダ表示と検索UIの英語表記を統一
+
+## Dependency policy
+
+This repository should continue using only the Python standard library.
+Do not add third-party Python packages unless the user explicitly changes this policy.
