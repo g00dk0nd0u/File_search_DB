@@ -2,7 +2,7 @@
 
 ## Final response rule
 
-If you make any fix, implementation, or refactor, always include a commit message at the end using the following format.
+If you make any fix, implementation, or refactor, always include a commit message as a code block at the end using the following format.
 
 Commit message:
 <one concise Japanese line describing the change>

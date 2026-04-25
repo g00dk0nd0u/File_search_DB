@@ -297,22 +297,46 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
   gap: 0.55rem;
 }
 .folder-open-button {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: auto;
-  height: 1.7rem;
-  padding: 0.3rem 0.65rem;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
   border: 1px solid var(--border-button);
-  border-radius: 5px;
+  border-radius: 6px;
   background: var(--nav-bg);
   color: var(--link-color);
-  font-size: 0.78rem;
-  font-weight: 600;
   line-height: 1;
 }
+.folder-open-button::before {
+  content: "";
+  position: absolute;
+  left: 0.45rem;
+  bottom: 0.45rem;
+  width: 0.65rem;
+  height: 0.65rem;
+  border: 1.6px solid currentColor;
+  border-radius: 2px;
+}
+.folder-open-button::after {
+  content: "";
+  position: absolute;
+  right: 0.42rem;
+  top: 0.42rem;
+  width: 0.48rem;
+  height: 0.48rem;
+  border-top: 1.8px solid currentColor;
+  border-right: 1.8px solid currentColor;
+  transform: translate(-0.02rem, 0.02rem) rotate(0deg);
+}
 .folder-open-button:hover { background: var(--surface-hover); }
+.folder-open-button:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-ring);
+}
 .detail-grid {
   display: grid;
   grid-template-columns: minmax(18rem, max-content) minmax(16rem, 1fr);
@@ -1589,7 +1613,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                 "<td>"
                 "<div class='folder-cell'>"
                 f"<a class='folder-name' data-expand-toggle='1' data-expanded='false' data-root-id='{row.root_id}' data-expand-path='{row_path}' href='#'>{folder_label}</a>"
-                f"<button type='button' class='folder-open-button' data-open-folder-path='{row_path}' aria-label='{open_label}'>{open_label}</button>"
+                f"<button type='button' class='folder-open-button' data-open-folder-path='{row_path}' aria-label='{open_label}' title='{open_label}'></button>"
                 "</div>"
                 "</td>"
                 "</tr>"
