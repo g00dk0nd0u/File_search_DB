@@ -560,7 +560,7 @@ THEME_SCRIPT = """
 
 
 SEARCH_PAGE_TEMPLATE = Template("""<!doctype html>
-<html lang="ja">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>Folder Search</title>
@@ -571,7 +571,7 @@ SEARCH_PAGE_TEMPLATE = Template("""<!doctype html>
   <div class="page-header">
     <h1>Folder Search</h1>
     <div class="header-actions">
-      <button type="button" class="theme-toggle" data-theme-toggle aria-label="テーマ切替" title="ダークモードに切替">
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="Toggle theme" title="Switch to dark mode">
         <span class="theme-toggle-icon" aria-hidden="true">☾</span>
       </button>
       <a class="nav-link" href="/settings">Settings</a>
@@ -602,7 +602,7 @@ $client_script
 
 
 SETTINGS_PAGE_TEMPLATE = Template("""<!doctype html>
-<html lang="ja">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>Folder Manager</title>
@@ -613,7 +613,7 @@ SETTINGS_PAGE_TEMPLATE = Template("""<!doctype html>
   <div class="page-header">
     <h1>Folder Manager</h1>
     <div class="header-actions">
-      <button type="button" class="theme-toggle" data-theme-toggle aria-label="テーマ切替" title="ダークモードに切替">
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="Toggle theme" title="Switch to dark mode">
         <span class="theme-toggle-icon" aria-hidden="true">☾</span>
       </button>
       <a class="nav-link" href="/">Back to Search</a>
@@ -651,12 +651,12 @@ document.addEventListener("DOMContentLoaded", function () {
     }
     if (theme === "dark") {
       themeIcon.textContent = "☀";
-      themeToggle.setAttribute("title", "ライトモードに切替");
-      themeToggle.setAttribute("aria-label", "ライトモードに切替");
+      themeToggle.setAttribute("title", "Switch to light mode");
+      themeToggle.setAttribute("aria-label", "Switch to light mode");
     } else {
       themeIcon.textContent = "☾";
-      themeToggle.setAttribute("title", "ダークモードに切替");
-      themeToggle.setAttribute("aria-label", "ダークモードに切替");
+      themeToggle.setAttribute("title", "Switch to dark mode");
+      themeToggle.setAttribute("aria-label", "Switch to dark mode");
     }
   };
 
@@ -753,7 +753,7 @@ document.addEventListener("DOMContentLoaded", function () {
     fallback.href = fileUrl;
     fallback.target = "_blank";
     fallback.rel = "noopener";
-    fallback.textContent = "PDFを別タブで開く";
+    fallback.textContent = "Open PDF in new tab";
     panel.appendChild(fallback);
   };
 
@@ -780,12 +780,12 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     const query = new URLSearchParams({ root_id: rootId, path: path });
-    renderPreviewMessage(panel, "読み込み中...", "preview-loading");
+    renderPreviewMessage(panel, "Loading...", "preview-loading");
     try {
       const response = await fetch("/preview?" + query.toString(), { method: "GET", cache: "no-store" });
       const payload = await response.json();
       if (!response.ok) {
-        renderPreviewMessage(panel, payload && payload.error ? String(payload.error) : "プレビューを取得できませんでした。", "preview-error");
+        renderPreviewMessage(panel, payload && payload.error ? String(payload.error) : "Could not load preview.", "preview-error");
         return;
       }
       if (payload && payload.mime === "application/pdf") {
@@ -797,11 +797,11 @@ document.addEventListener("DOMContentLoaded", function () {
       const meta = document.createElement("div");
       meta.className = "preview-meta";
       const name = path.split(/[\\\\/]/).pop() || path;
-      meta.textContent = name + (payload.truncated ? " / 先頭のみ表示" : "");
+      meta.textContent = name + (payload.truncated ? " / showing beginning only" : "");
       panel.appendChild(meta);
 
       if (!payload.content) {
-        renderPreviewMessage(panel, payload.error || "プレビューできるテキスト内容がありません。", "preview-note");
+        renderPreviewMessage(panel, payload.error || "No previewable text content is available.", "preview-note");
         return;
       }
 
@@ -810,7 +810,7 @@ document.addEventListener("DOMContentLoaded", function () {
       pre.textContent = payload.content;
       panel.appendChild(pre);
     } catch (_error) {
-      renderPreviewMessage(panel, "プレビューを取得できませんでした。", "preview-error");
+      renderPreviewMessage(panel, "Could not load preview.", "preview-error");
     }
   };
 
@@ -819,7 +819,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (!payload || !Array.isArray(payload.items) || payload.items.length === 0) {
       const empty = document.createElement("div");
       empty.className = "children-empty";
-      empty.textContent = "表示できる項目はありません。";
+      empty.textContent = "No items available.";
       panel.appendChild(empty);
       return;
     }
@@ -929,11 +929,11 @@ document.addEventListener("DOMContentLoaded", function () {
 
     panel.textContent = "";
     if (previewPanel) {
-      renderPreviewMessage(previewPanel, "ファイルを選択するとここにプレビューを表示します。", "preview-empty");
+      renderPreviewMessage(previewPanel, "Select a file to preview it here.", "preview-empty");
     }
     const loading = document.createElement("div");
     loading.className = "children-loading";
-    loading.textContent = "読み込み中...";
+    loading.textContent = "Loading...";
     panel.appendChild(loading);
 
     const query = new URLSearchParams({ root_id: rootId, path: folderPath });
@@ -943,7 +943,7 @@ document.addEventListener("DOMContentLoaded", function () {
       if (!response.ok) {
         const error = document.createElement("div");
         error.className = "children-error";
-        error.textContent = payload && payload.error ? String(payload.error) : "項目を取得できませんでした。";
+        error.textContent = payload && payload.error ? String(payload.error) : "Could not load items.";
         panel.textContent = "";
         panel.appendChild(error);
         return;
@@ -952,7 +952,7 @@ document.addEventListener("DOMContentLoaded", function () {
     } catch (_error) {
       const error = document.createElement("div");
       error.className = "children-error";
-      error.textContent = "項目を取得できませんでした。";
+      error.textContent = "Could not load items.";
       panel.textContent = "";
       panel.appendChild(error);
     }
@@ -1078,7 +1078,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         if not roots:
             message = ""
         elif selected_root_id is None:
-            message = "検索対象を選択してください"
+            message = "Please select a search target."
         elif not query:
             message = ""
         else:
@@ -1088,7 +1088,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             else:
                 with closing(conn):
                     rows = search_folders(conn, selected_root_id, query)
-                result_message = f"{len(rows)}件ヒット"
+                result_message = f"{len(rows)} hit(s)"
 
         body = SEARCH_PAGE_TEMPLATE.safe_substitute(
             theme_script=THEME_SCRIPT,
@@ -1138,21 +1138,21 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                     root = add_root(conn, display_name, root_path)
                     count = scan_root(conn, root.id)
                     conn.commit()
-                    self._redirect_with_message("info", f"{root.display_name} を登録しました。{count}件のフォルダをスキャン済です。")
+                    self._redirect_with_message("info", f"Added {root.display_name}. {count} folder(s) scanned.")
                     return
                 if action == "rescan_root":
                     root = self._require_root(conn, params)
                     count = scan_root(conn, root.id)
                     conn.commit()
-                    self._redirect_with_message("info", f"{root.display_name} を再スキャンしました。{count}件のフォルダを登録済です。")
+                    self._redirect_with_message("info", f"Reloaded {root.display_name}. {count} folder(s) registered.")
                     return
                 if action == "delete_root":
                     root = self._require_root(conn, params)
                     delete_root(conn, root.id)
                     conn.commit()
-                    self._redirect_with_message("info", f"{root.display_name} を削除しました。")
+                    self._redirect_with_message("info", f"Deleted {root.display_name}.")
                     return
-                raise ValueError("未対応の操作です。")
+                raise ValueError("Unsupported action.")
             finally:
                 conn.close()
         except Exception as exc:
@@ -1394,7 +1394,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                 truncated=False,
                 encoding="",
                 mime="application/pdf",
-                error="PDFファイルは右ペインで表示します。",
+                error="PDF files are shown in the right pane.",
             )
         with file_path.open("rb") as file_obj:
             raw = file_obj.read(PREVIEW_BYTES + 1)
@@ -1408,7 +1408,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                 truncated=truncated,
                 encoding="binary",
                 mime=mime,
-                error="バイナリファイルのためプレビューできません。",
+                error="Binary files cannot be previewed.",
             )
 
         for encoding in ("utf-8", "cp932"):
@@ -1470,7 +1470,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
     def _connect_existing_db(self, create: bool = False) -> Tuple[Optional[sqlite3.Connection], str]:
         db_path = Path(self.db_path)
         if not db_path.exists() and not create:
-            return None, "DBファイルが見つかりません"
+            return None, "DB file not found"
         if create:
             db_path.parent.mkdir(parents=True, exist_ok=True)
             conn = connect_db(db_path)
@@ -1485,7 +1485,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             ensure_db(conn)
             return conn, ""
         except sqlite3.OperationalError:
-            return None, "DBファイルを開けません"
+            return None, "Could not open DB file"
 
     def _read_post_params(self):
         length = int(self.headers.get("Content-Length", "0") or "0")
@@ -1497,7 +1497,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         root_id = int(params.get("root_id", ["0"])[0] or "0")
         root = get_root(conn, root_id)
         if root is None:
-            raise ValueError("検索対象フォルダが見つかりません")
+            raise ValueError("Search target folder not found")
         return root
 
     @staticmethod
@@ -1539,7 +1539,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
     @staticmethod
     def _render_root_options(roots, selected_root_id: Optional[int]) -> str:
         if not roots:
-            return "<option value=''>未登録</option>"
+            return "<option value=''>No entries</option>"
         options = []
         for root in roots:
             selected = " selected" if root.id == selected_root_id else ""
@@ -1574,7 +1574,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
     @classmethod
     def render_results(cls, rows, query: str, result_message: str = "") -> str:
         if not rows:
-            return "<div class='empty'>該当するフォルダが見つかりませんでした。</div>"
+            return "<div class='empty'>No matching folders were found.</div>"
         count_html = f"<span class='result-count'>{html.escape(result_message)}</span>" if result_message else ""
         lines = [
             "<table class='result-table'>",
@@ -1600,7 +1600,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                 "<div class='detail-shell'>"
                 "<div class='detail-grid'>"
                 "<div class='children-panel' data-child-panel='1'></div>"
-                "<div class='preview-panel' data-preview-panel='1'><div class='preview-empty'>ファイルを選択するとここにプレビューを表示します。</div></div>"
+                "<div class='preview-panel' data-preview-panel='1'><div class='preview-empty'>Select a file to preview it here.</div></div>"
                 "</div>"
                 "</div>"
                 "</td>"
@@ -1616,7 +1616,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
     @staticmethod
     def render_roots_table(roots) -> str:
         if not roots:
-            return "<div class='empty'>検索対象フォルダはまだ登録されていません。</div>"
+            return "<div class='empty'>No search target folders have been added yet.</div>"
 
         lines = [
             "<table>",
@@ -1653,7 +1653,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
     @staticmethod
     def _format_scan_time(scanned_at: str) -> str:
         if not scanned_at:
-            return "未スキャン"
+            return "Not scanned"
         try:
             parsed = datetime.fromisoformat(scanned_at.replace("Z", "+00:00"))
             return parsed.strftime("%Y-%m-%d %H:%M")
@@ -1686,8 +1686,8 @@ class FileSearchServer(ThreadingHTTPServer):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="登録フォルダをSQLiteから検索するWeb UI")
-    parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB パス")
+    parser = argparse.ArgumentParser(description="Web UI for searching registered folders from SQLite")
+    parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="Path to SQLite DB")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", default=8765, type=int)
     return parser.parse_args()
@@ -1711,7 +1711,7 @@ def open_browser(url: str, delay_seconds: float = 0.3) -> None:
 
 def choose_folder_path() -> str:
     if sys.platform == "darwin":
-        script = 'POSIX path of (choose folder with prompt "検索対象フォルダを選択")'
+        script = 'POSIX path of (choose folder with prompt "Choose a folder to add")'
         result = subprocess.run(
             ["osascript", "-e", script],
             check=False,
@@ -1720,22 +1720,22 @@ def choose_folder_path() -> str:
         )
         if result.returncode == 0:
             return result.stdout.strip()
-        raise ValueError("フォルダ選択がキャンセルされました。")
+        raise ValueError("Folder selection was canceled.")
 
     try:
         import tkinter as tk
         from tkinter import filedialog
     except ImportError as exc:
-        raise RuntimeError("この環境ではフォルダ選択ダイアログを開けません。") from exc
+        raise RuntimeError("Folder selection dialog is not available in this environment.") from exc
 
     root = tk.Tk()
     root.withdraw()
     try:
-        selected = filedialog.askdirectory(title="検索対象フォルダを選択")
+        selected = filedialog.askdirectory(title="Choose a folder to add")
     finally:
         root.destroy()
     if not selected:
-        raise ValueError("フォルダ選択がキャンセルされました。")
+        raise ValueError("Folder selection was canceled.")
     return selected
 
 

@@ -1,62 +1,62 @@
-# File Search DB（フォルダ置き場検索）
+# File Search DB
 
-登録したプロジェクトフォルダ配下のフォルダ名をSQLiteに保存し、ブラウザから検索するローカルWebアプリです。
+A local web app that stores folder names under registered project roots in SQLite and lets you search them from the browser.
 
-ラフ版では **フォルダ名検索のみ** を対象にしています。ファイル名検索やPDF/Word等の本文検索は次段階の拡張想定です。
+This version focuses on **folder-name search only**. File-name search and full-text search for PDF/Word files are planned as future extensions.
 
-このリポジトリは Python 標準ライブラリのみで動作します。追加の `pip install` は不要です。
+This repository runs on the Python standard library only. No extra `pip install` step is required.
 
-## クイックスタート
+## Quick Start
 
-### 1) 空のSQLite DBを準備
+### 1) Prepare an empty SQLite DB
 
 ```bash
 python -m src.prepare_sqlite --db data/file_index.db
 ```
 
-### 2) Web UIを起動
+### 2) Start the Web UI
 
 ```bash
 python -m src.web_app --db data/file_index.db --host 127.0.0.1 --port 8765
 ```
 
-ブラウザで `http://127.0.0.1:8765` を開きます。
+Open `http://127.0.0.1:8765` in your browser.
 
-`data/file_index.db` が存在しない初回起動時は、起動処理の中で必要なDB/テーブルが自動作成されます。  
-一度作成されたDBはそのまま再利用されるため、通常の再起動で毎回初期化されることはありません。
+If `data/file_index.db` does not exist on first launch, the required DB and tables are created automatically during startup.  
+Once created, the DB is reused as-is, so normal restarts do not reinitialize it every time.
 
-## 使い方
+## Usage
 
-1. 右上の `Settings` を開きます。
-2. 必要なら表示名を入力し、`Open` を押します。
-3. フォルダ選択ダイアログで検索対象フォルダを選ぶと、自動で登録してスキャンします。
-4. 検索画面に戻り、検索対象をプルダウンで選びます。
-5. キーワードを入力すると、登録済みフォルダからリアルタイムに検索します。
-6. 結果の `開く` から該当フォルダをFinderで開けます。
+1. Open `Settings` in the top-right corner.
+2. Enter a display name if needed, then click `Choose Folder`.
+3. Select a folder in the folder picker. It will be added and scanned automatically.
+4. Return to the search screen and choose a search target from the dropdown.
+5. Enter keywords to search registered folders in real time.
+6. Use `Open in Finder` or `Open Folder` in the results to open the matched folder.
 
-## 検索キーワード
+## Search Keywords
 
-検索対象は当該フォルダ名のみです。親フォルダ名やパス途中の文字ではヒットしません。
+Only the folder name itself is searched. Parent folder names and intermediate path segments do not match.
 
-- `alpha beta`: `alpha` と `beta` の両方を含むフォルダ
-- `alpha OR beta`: `alpha` または `beta` を含むフォルダ
-- `alpha -draft`: `alpha` を含み、`draft` を含まないフォルダ
-- `"alpha beta"`: `alpha beta` を連続した語句として含むフォルダ
+- `alpha beta`: folders containing both `alpha` and `beta`
+- `alpha OR beta`: folders containing either `alpha` or `beta`
+- `alpha -draft`: folders containing `alpha` but not `draft`
+- `"alpha beta"`: folders containing the exact phrase `alpha beta`
 
-## データベース設計（概要）
+## Database Design Overview
 
-- `roots`: 登録した検索対象フォルダ（表示名、ルートパス、登録日時、最終スキャン日時、フォルダ件数）
-- `folders`: スキャンされたフォルダ（root_id、フォルダ名、絶対パス、親パス、階層深さ、更新日時）
+- `roots`: registered search target folders (display name, root path, created time, last scanned time, folder count)
+- `folders`: scanned folders (root_id, folder name, absolute path, parent path, depth, updated time)
 
-再スキャン時は対象ルートの `folders` を一度削除し、現在のフォルダ構成で入れ直します。
+When reloading, the target root's `folders` rows are cleared and rebuilt from the current folder structure.
 
-## テスト
+## Tests
 
 ```bash
 python -m unittest tests.test_web_and_db
 ```
 
-補助確認:
+Quick check:
 
 ```bash
 python src/web_app.py --help
