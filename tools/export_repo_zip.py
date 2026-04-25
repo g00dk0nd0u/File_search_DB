@@ -3,8 +3,9 @@
 Create a ZIP snapshot of this repository for ChatGPT upload.
 
 - Uses only Python standard library
-- Excludes files matched by .gitignore
-- Excludes .git, __pycache__, cache files, and local noise
+- Prefer Git-tracked files by using `git ls-files`
+- Falls back to .gitignore-based scan when Git is unavailable
+- Excludes .git, __pycache__, and local noise
 - Saves ZIP to the user's Downloads folder by default
 - Opens the output folder after creating the ZIP
 """
@@ -57,26 +58,22 @@ def is_ignored(relative_path: str, patterns: list[str]) -> bool:
         if not pattern:
             continue
 
-        # Directory ignore: data/
         if pattern.endswith("/"):
             folder = pattern.rstrip("/")
             if normalized == folder or normalized.startswith(folder + "/"):
                 return True
             continue
 
-        # Root-based ignore: /data/file.db
         if pattern.startswith("/"):
             pattern = pattern.lstrip("/")
             if fnmatch.fnmatch(normalized, pattern):
                 return True
             continue
 
-        # Filename ignore: *.pyc
         if "/" not in pattern:
             if fnmatch.fnmatch(name, pattern):
                 return True
 
-        # Path ignore: data/*.db
         if fnmatch.fnmatch(normalized, pattern):
             return True
 
@@ -96,6 +93,58 @@ def should_include(path: Path, repo_root: Path, patterns: list[str]) -> bool:
         return False
 
     return True
+
+
+def get_git_tracked_files(repo_root: Path) -> list[Path] | None:
+    """
+    Return Git-tracked files using `git ls-files`.
+
+    Returns None when:
+    - git command is not available
+    - repo_root is not a Git repository
+    - git ls-files fails
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "ls-files"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            check=True,
+        )
+    except FileNotFoundError:
+        print("[WARN] git command not found. Falling back to .gitignore-based scan.")
+        return None
+    except subprocess.CalledProcessError:
+        print("[WARN] git ls-files failed. Falling back to .gitignore-based scan.")
+        return None
+
+    files: list[Path] = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        path = repo_root / line
+        if path.is_file():
+            files.append(path)
+
+    return files
+
+
+def collect_candidate_files(repo_root: Path, patterns: list[str]) -> tuple[list[Path], str]:
+    git_files = get_git_tracked_files(repo_root)
+
+    if git_files is not None:
+        return sorted(git_files), "git ls-files"
+
+    files = [
+        path
+        for path in sorted(repo_root.rglob("*"))
+        if path.is_file() and should_include(path, repo_root, patterns)
+    ]
+    return files, ".gitignore fallback"
 
 
 def get_downloads_dir() -> Path:
@@ -121,20 +170,14 @@ def create_zip(repo_root: Path, output_dir: Path) -> Path:
     zip_path = output_dir / f"{repo_name}_snapshot_{timestamp}.zip"
 
     patterns = read_gitignore(repo_root)
+    candidate_files, mode = collect_candidate_files(repo_root, patterns)
+
     included_count = 0
-    skipped_count = 0
     error_count = 0
 
     try:
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            for path in sorted(repo_root.rglob("*")):
-                if path.is_dir():
-                    continue
-
-                if not should_include(path, repo_root, patterns):
-                    skipped_count += 1
-                    continue
-
+            for path in candidate_files:
                 try:
                     arcname = path.relative_to(repo_root).as_posix()
                     zf.write(path, arcname)
@@ -155,8 +198,8 @@ def create_zip(repo_root: Path, output_dir: Path) -> Path:
         raise OSError(f"Failed to create ZIP file: {zip_path} ({exc})") from exc
 
     print(f"Created ZIP: {zip_path}")
+    print(f"Export mode: {mode}")
     print(f"Included files: {included_count}")
-    print(f"Skipped files: {skipped_count}")
 
     if error_count:
         print(f"[WARN] Files with errors: {error_count}")
@@ -166,7 +209,7 @@ def create_zip(repo_root: Path, output_dir: Path) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Export repository files to ZIP, excluding .gitignore patterns."
+        description="Export repository files to ZIP for ChatGPT review."
     )
     parser.add_argument(
         "--repo",
