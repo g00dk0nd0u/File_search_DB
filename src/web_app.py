@@ -179,11 +179,20 @@ h1 {
   gap: 0.85rem;
   align-items: flex-end;
 }
+.search-row {
+  justify-content: space-between;
+}
 .field {
   display: grid;
   gap: 0.3rem;
 }
 .field-grow { flex: 1 1 22rem; }
+.search-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-left: auto;
+}
 .search-input-group { display: flex; }
 .search-input-group #q {
   border-radius: 5px 0 0 5px;
@@ -592,15 +601,6 @@ SEARCH_PAGE_TEMPLATE = Template("""<!doctype html>
   <style>$base_css</style>
 </head>
 <body>
-  <div class="page-header">
-    <h1>Folder Search</h1>
-    <div class="header-actions">
-      <button type="button" class="theme-toggle" data-theme-toggle aria-label="Toggle theme" title="Switch to dark mode">
-        <span class="theme-toggle-icon" aria-hidden="true">☾</span>
-      </button>
-      <a class="nav-link" href="/settings">Settings</a>
-    </div>
-  </div>
   <form method="get" action="/" class="search-form">
     <div class="search-row">
       <div class="field">
@@ -612,6 +612,12 @@ SEARCH_PAGE_TEMPLATE = Template("""<!doctype html>
           <input id="q" type="text" name="q" value="$query" placeholder="Enter keyword" autocomplete="off" aria-label="Keyword" />
           <button type="submit">Search</button>
         </div>
+      </div>
+      <div class="search-tools">
+        <button type="button" class="theme-toggle" data-theme-toggle aria-label="Toggle theme" title="Switch to dark mode">
+          <span class="theme-toggle-icon" aria-hidden="true">☾</span>
+        </button>
+        <a class="nav-link" href="/settings">Settings</a>
       </div>
     </div>
   </form>
