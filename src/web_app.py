@@ -620,7 +620,7 @@ SEARCH_PAGE_TEMPLATE = Template("""<!doctype html>
         <button type="button" class="theme-toggle" data-theme-toggle aria-label="Toggle theme" title="Switch to dark mode">
           <span class="theme-toggle-icon" aria-hidden="true">☾</span>
         </button>
-        <a class="nav-link" href="/settings">Settings</a>
+        <a class="nav-link" href="$settings_href">Settings</a>
       </div>
     </div>
   </form>
@@ -646,6 +646,7 @@ SETTINGS_PAGE_TEMPLATE = Template("""<!doctype html>
   <div class="panel">
     <form method="post" action="/settings/action" class="settings-form">
       <input type="hidden" name="action" value="choose_root" />
+      $return_to_input
       <div class="field">
         <input id="display_name" type="text" name="display_name" placeholder="Example: Company Server" />
       </div>
@@ -654,7 +655,7 @@ SETTINGS_PAGE_TEMPLATE = Template("""<!doctype html>
         <button type="button" class="theme-toggle" data-theme-toggle aria-label="Toggle theme" title="Switch to dark mode">
           <span class="theme-toggle-icon" aria-hidden="true">☾</span>
         </button>
-        <a class="nav-link" href="/">Back to Search</a>
+        <a class="nav-link" href="$back_to_search_href">Back to Search</a>
       </div>
     </form>
   </div>
@@ -1126,6 +1127,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             root_options=self._render_root_options(roots, selected_root_id),
             query=html.escape(query),
             meta_html=self._render_meta(message),
+            settings_href=self._settings_href(selected_root_id, query),
             results="" if not roots or not query else self.render_results(rows, query, result_message),
         ).encode("utf-8")
         self._send_html(body)
@@ -1134,6 +1136,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         params = parse_qs(parsed.query)
         message = params.get("message", [""])[0].strip()
         kind = params.get("kind", ["info"])[0].strip()
+        return_to = params.get("return_to", [""])[0].strip()
         notice = self._render_notice(message, kind) if message else ""
 
         roots = []
@@ -1147,13 +1150,16 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             base_css=BASE_CSS,
             client_script=CLIENT_SCRIPT,
             notice=notice,
-            roots_table=self.render_roots_table(roots),
+            roots_table=self.render_roots_table(roots, return_to),
+            back_to_search_href=html.escape(return_to or "/"),
+            return_to_input=self._render_hidden_return_to(return_to),
         ).encode("utf-8")
         self._send_html(body)
 
     def _handle_settings_action(self):
         params = self._read_post_params()
         action = params.get("action", [""])[0].strip()
+        return_to = params.get("return_to", [""])[0].strip()
 
         try:
             db_path = Path(self.db_path)
@@ -1167,25 +1173,25 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                     root = add_root(conn, display_name, root_path)
                     count = scan_root(conn, root.id)
                     conn.commit()
-                    self._redirect_with_message("info", f"Added {root.display_name}. {count} folder(s) scanned.")
+                    self._redirect_with_message("info", f"Added {root.display_name}. {count} folder(s) scanned.", return_to)
                     return
                 if action == "rescan_root":
                     root = self._require_root(conn, params)
                     count = scan_root(conn, root.id)
                     conn.commit()
-                    self._redirect_with_message("info", f"Reloaded {root.display_name}. {count} folder(s) registered.")
+                    self._redirect_with_message("info", f"Reloaded {root.display_name}. {count} folder(s) registered.", return_to)
                     return
                 if action == "delete_root":
                     root = self._require_root(conn, params)
                     delete_root(conn, root.id)
                     conn.commit()
-                    self._redirect_with_message("info", f"Deleted {root.display_name}.")
+                    self._redirect_with_message("info", f"Deleted {root.display_name}.", return_to)
                     return
                 raise ValueError("Unsupported action.")
             finally:
                 conn.close()
         except Exception as exc:
-            self._redirect_with_message("error", str(exc))
+            self._redirect_with_message("error", str(exc), return_to)
 
     def _handle_open_path(self, parsed):
         params = parse_qs(parsed.query)
@@ -1490,8 +1496,11 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         typed_items.sort(key=lambda item: (item[0], item[1]))
         return [item[2] for item in typed_items]
 
-    def _redirect_with_message(self, kind: str, message: str):
-        query = urlencode({"kind": kind, "message": message})
+    def _redirect_with_message(self, kind: str, message: str, return_to: str = ""):
+        payload = {"kind": kind, "message": message}
+        if return_to:
+            payload["return_to"] = return_to
+        query = urlencode(payload)
         self.send_response(HTTPStatus.SEE_OTHER)
         self.send_header("Location", f"/settings?{query}")
         self.end_headers()
@@ -1637,11 +1646,16 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         return "\n".join(lines)
 
     @staticmethod
-    def _current_search_path(root_id: int, query: str) -> str:
-        return f"/?{urlencode({'root_id': root_id, 'q': query})}"
+    def _current_search_path(root_id: Optional[int], query: str) -> str:
+        payload = {}
+        if root_id is not None:
+            payload["root_id"] = root_id
+        if query:
+            payload["q"] = query
+        return f"/?{urlencode(payload)}" if payload else "/"
 
     @staticmethod
-    def render_roots_table(roots) -> str:
+    def render_roots_table(roots, return_to: str = "") -> str:
         if not roots:
             return "<div class='empty'>No search target folders have been added yet.</div>"
 
@@ -1650,6 +1664,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             "<thead><tr><th>Display Name</th><th>Path</th><th>Status</th><th>Actions</th></tr></thead>",
             "<tbody>",
         ]
+        return_to_input = FileSearchHandler._render_hidden_return_to(return_to)
         for root in roots:
             scanned = FileSearchHandler._format_scan_time(root.last_scanned_at)
             actions = (
@@ -1657,11 +1672,13 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                 "<form method='post' action='/settings/action'>"
                 f"<input type='hidden' name='root_id' value='{root.id}' />"
                 "<input type='hidden' name='action' value='rescan_root' />"
+                f"{return_to_input}"
                 "<button type='submit' class='button-secondary'>Reload</button>"
                 "</form>"
                 "<form method='post' action='/settings/action'>"
                 f"<input type='hidden' name='root_id' value='{root.id}' />"
                 "<input type='hidden' name='action' value='delete_root' />"
+                f"{return_to_input}"
                 "<button type='submit' class='button-danger'>Delete</button>"
                 "</form>"
                 "</div>"
@@ -1686,6 +1703,19 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             return parsed.strftime("%Y-%m-%d %H:%M")
         except ValueError:
             return scanned_at[:16].replace("T", " ")
+
+    @staticmethod
+    def _render_hidden_return_to(return_to: str) -> str:
+        if not return_to:
+            return ""
+        return f"<input type='hidden' name='return_to' value='{html.escape(return_to, quote=True)}' />"
+
+    @staticmethod
+    def _settings_href(root_id: Optional[int], query: str) -> str:
+        return_to = FileSearchHandler._current_search_path(root_id, query)
+        if return_to == "/":
+            return "/settings"
+        return f"/settings?{urlencode({'return_to': return_to})}"
 
 
 class FileSearchServer(ThreadingHTTPServer):
