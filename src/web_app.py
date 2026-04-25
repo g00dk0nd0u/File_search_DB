@@ -1575,10 +1575,8 @@ class FileSearchHandler(BaseHTTPRequestHandler):
     def render_results(cls, rows, query: str, result_message: str = "") -> str:
         if not rows:
             return "<div class='empty'>No matching folders were found.</div>"
-        count_html = f"<span class='result-count'>{html.escape(result_message)}</span>" if result_message else ""
         lines = [
             "<table class='result-table'>",
-            f"<thead><tr><th>Parent Folder / Folder{count_html}</th></tr></thead>",
             "<tbody>",
         ]
         for row in rows:
