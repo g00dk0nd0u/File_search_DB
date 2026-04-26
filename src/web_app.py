@@ -1927,6 +1927,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
     @staticmethod
     def _collect_children_items(folder_path: Path, query: str = ""):
         typed_items = []
+        has_query = bool(query.strip())
         try:
             entries = list(folder_path.iterdir())
         except OSError:
@@ -1944,15 +1945,18 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                 continue
             display_name = entry.name
             is_match = FileSearchHandler._query_matches_text(entry.name, query)
+            if has_query and not is_match:
+                continue
             if item_type == "dir":
-                if is_match:
+                if has_query:
                     display_html = "/" + FileSearchHandler._highlight_text(display_name, query)
                 else:
                     display_html = "/" + html.escape(display_name)
-            elif is_match:
-                display_html = FileSearchHandler._highlight_text(display_name, query)
             else:
-                display_html = html.escape(display_name)
+                if has_query:
+                    display_html = FileSearchHandler._highlight_text(display_name, query)
+                else:
+                    display_html = html.escape(display_name)
             typed_items.append(
                 (
                     0 if item_type == "dir" else 1,
