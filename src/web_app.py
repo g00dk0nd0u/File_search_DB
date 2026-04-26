@@ -1702,8 +1702,15 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         mime = guess_mime_type(target_path)
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", mime)
-        filename = quote(target_path.name, safe="")
-        self.send_header("Content-Disposition", f"inline; filename=\"{target_path.name}\"; filename*=UTF-8''{filename}")
+        encoded_filename = quote(target_path.name, safe="")
+        ascii_fallback = target_path.name.encode("ascii", "ignore").decode("ascii").strip()
+        if not ascii_fallback:
+            ascii_fallback = "file" + target_path.suffix
+        ascii_fallback = ascii_fallback.replace("\\", "_").replace('"', "_")
+        self.send_header(
+            "Content-Disposition",
+            f"inline; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded_filename}",
+        )
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
