@@ -140,10 +140,14 @@ html[data-theme="dark"] {
   --mark-bg: #B7791F;
   --mark-text: #111111;
 }
+html {
+  overflow-x: auto;
+}
 body {
   font-family: "Hiragino Sans", "Yu Gothic UI", sans-serif;
   margin: 0;
   padding: 1.5rem 1rem 2rem;
+  min-width: 980px;
   max-width: min(1500px, calc(100vw - 2rem));
   margin-inline: auto;
   background: var(--bg-color);
@@ -390,13 +394,7 @@ tbody td {
 }
 tbody tr:nth-child(even) { background: transparent; }
 tbody tr:hover { background: transparent; }
-.result-detail-row {
-  display: block;
-  width: 100%;
-}
 .result-detail-row td {
-  display: block;
-  width: 100%;
   background: transparent;
   padding: 0 0 0.45rem;
 }
@@ -878,18 +876,15 @@ html[data-theme="dark"] .result-table tr[data-row-path]:has(.folder-name[data-ex
 }
 @media (max-width: 720px) {
   .detail-grid {
-    grid-template-columns: 1fr;
-  }
-  .children-panel {
-    width: 100%;
-    min-width: 0;
+    grid-template-columns: clamp(20rem, 38%, 34rem) minmax(0, 1fr);
   }
   .pdf-preview-frame {
-    width: 100%;
-    height: 32rem;
-    min-height: 32rem;
+    width: min(100%, 31rem);
+    height: 38rem;
+    min-height: 38rem;
   }
   .image-preview {
+    width: min(100%, 34rem);
     max-width: 100%;
   }
 }
