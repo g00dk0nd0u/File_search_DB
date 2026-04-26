@@ -1487,7 +1487,8 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         return
 
     def _handle_search_page(self, parsed):
-        root_id, query = self._parse_search_inputs(parsed.query)
+        root_id, query_raw = self._parse_search_inputs(parsed.query)
+        query_search = query_raw.strip()
         roots, selected_root_id = self._load_roots(root_id)
         rows = []
         message = ""
@@ -1497,7 +1498,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             message = ""
         elif selected_root_id is None:
             message = "Please select a search target."
-        elif not query:
+        elif not query_search:
             message = ""
         else:
             conn, warning = self._connect_existing_db()
@@ -1505,7 +1506,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                 message = warning
             else:
                 with closing(conn):
-                    rows = search_folders(conn, selected_root_id, query)
+                    rows = search_folders(conn, selected_root_id, query_search)
                 result_message = f"{len(rows)} hit(s)"
 
         body = SEARCH_PAGE_TEMPLATE.safe_substitute(
@@ -1513,10 +1514,10 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             base_css=BASE_CSS,
             client_script=CLIENT_SCRIPT,
             root_options=self._render_root_options(roots, selected_root_id),
-            query=html.escape(query),
+            query=html.escape(query_raw),
             meta_html=self._render_meta(message),
-            settings_href=self._settings_href(selected_root_id, query),
-            results="" if not roots or not query else self.render_results(rows, query, result_message),
+            settings_href=self._settings_href(selected_root_id, query_raw),
+            results="" if not roots or not query_search else self.render_results(rows, query_search, result_message),
         ).encode("utf-8")
         self._send_html(body)
 
@@ -2040,13 +2041,13 @@ class FileSearchHandler(BaseHTTPRequestHandler):
     def _parse_search_inputs(query_string: str) -> Tuple[Optional[int], str]:
         params = parse_qs(query_string)
         root_value = params.get("root_id", [""])[0].strip()
-        query = params.get("q", [""])[0].strip()
+        query_raw = params.get("q", [""])[0]
         if not root_value:
-            return None, query
+            return None, query_raw
         try:
-            return int(root_value), query
+            return int(root_value), query_raw
         except ValueError:
-            return None, query
+            return None, query_raw
 
     def _load_roots(self, requested_root_id: Optional[int]):
         conn, _warning = self._connect_existing_db()
