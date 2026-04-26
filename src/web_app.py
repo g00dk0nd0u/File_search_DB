@@ -414,6 +414,14 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
   background: var(--surface-color);
   padding: 0.55rem 0.65rem;
 }
+.preview-panel.is-image-preview {
+  position: relative;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
 .children-panel {
   min-width: 18rem;
   width: max-content;
@@ -552,10 +560,47 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
   display: block;
   max-width: 100%;
   max-height: 34rem;
-  border: 1px solid var(--border-soft);
+  border: 0;
   border-radius: 6px;
-  background: var(--surface-soft);
+  background: transparent;
   object-fit: contain;
+}
+.image-open-button {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  width: 1.65rem;
+  height: 1.65rem;
+  border: 1px solid var(--border-button);
+  border-radius: 6px;
+  background: var(--nav-bg);
+  color: var(--link-color);
+  opacity: 0.85;
+  text-decoration: none;
+}
+.image-open-button:hover {
+  opacity: 1;
+  background: var(--surface-hover);
+}
+.image-open-button::before {
+  content: "";
+  position: absolute;
+  left: 0.42rem;
+  bottom: 0.42rem;
+  width: 0.58rem;
+  height: 0.58rem;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+}
+.image-open-button::after {
+  content: "";
+  position: absolute;
+  right: 0.38rem;
+  top: 0.38rem;
+  width: 0.48rem;
+  height: 0.48rem;
+  border-top: 1.7px solid currentColor;
+  border-right: 1.7px solid currentColor;
 }
 .pdf-fallback-link {
   display: inline-flex;
@@ -873,6 +918,7 @@ document.addEventListener("DOMContentLoaded", function () {
   };
 
   const renderPreviewMessage = function (panel, message, className) {
+    panel.classList.remove("is-image-preview");
     panel.textContent = "";
     const messageElement = document.createElement("div");
     messageElement.className = className;
@@ -916,6 +962,7 @@ document.addEventListener("DOMContentLoaded", function () {
   };
 
   const renderPdfPreview = function (panel, rootId, path) {
+    panel.classList.remove("is-image-preview");
     panel.textContent = "";
     const meta = document.createElement("div");
     meta.className = "preview-meta";
@@ -939,11 +986,8 @@ document.addEventListener("DOMContentLoaded", function () {
   };
 
   const renderImagePreview = function (panel, rootId, path, mime) {
+    panel.classList.add("is-image-preview");
     panel.textContent = "";
-    const meta = document.createElement("div");
-    meta.className = "preview-meta";
-    meta.textContent = (path.split(/[\\\\/]/).pop() || path) + (mime ? " / " + mime : "");
-    panel.appendChild(meta);
 
     const fileUrl = buildFileUrl(rootId, path);
     const image = document.createElement("img");
@@ -953,15 +997,18 @@ document.addEventListener("DOMContentLoaded", function () {
     panel.appendChild(image);
 
     const fallback = document.createElement("a");
-    fallback.className = "pdf-fallback-link";
+    fallback.className = "image-open-button";
     fallback.href = buildImageViewUrl(rootId, path);
     fallback.target = "_blank";
     fallback.rel = "noopener";
-    fallback.textContent = "Open image in new tab";
+    fallback.setAttribute("aria-label", "Open image in new tab");
+    fallback.setAttribute("title", "Open image in new tab");
+    fallback.textContent = "";
     panel.appendChild(fallback);
   };
 
   const renderOfficePreviewNote = function (panel, rootId, path, mime) {
+    panel.classList.remove("is-image-preview");
     panel.textContent = "";
     const meta = document.createElement("div");
     meta.className = "preview-meta";
@@ -1025,6 +1072,7 @@ document.addEventListener("DOMContentLoaded", function () {
         return;
       }
 
+      panel.classList.remove("is-image-preview");
       panel.textContent = "";
       const meta = document.createElement("div");
       meta.className = "preview-meta";
