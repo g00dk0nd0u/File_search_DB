@@ -1858,10 +1858,16 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             if not item_type:
                 continue
             display_name = entry.name
+            is_match = FileSearchHandler._query_matches_text(entry.name, query)
             if item_type == "dir":
-                display_html = "/" + FileSearchHandler._highlight_text(display_name, query)
-            else:
+                if is_match:
+                    display_html = "/" + FileSearchHandler._highlight_text(display_name, query)
+                else:
+                    display_html = "/" + html.escape(display_name)
+            elif is_match:
                 display_html = FileSearchHandler._highlight_text(display_name, query)
+            else:
+                display_html = html.escape(display_name)
             typed_items.append(
                 (
                     0 if item_type == "dir" else 1,
@@ -1870,7 +1876,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                         "name": entry.name,
                         "path": str(entry.resolve()),
                         "type": item_type,
-                        "is_match": item_type == "file" and FileSearchHandler._query_matches_text(entry.name, query),
+                        "is_match": item_type == "file" and is_match,
                         "display_html": display_html,
                     },
                 )
@@ -2003,7 +2009,10 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             parent_name = Path(row.parent_path).name or row.parent_path
             row_path = html.escape(row.path, quote=True)
             parent_label = html.escape(parent_name)
-            current_label = cls._highlight_text(row.name, query)
+            if cls._query_matches_text(row.name, query):
+                current_label = cls._highlight_text(row.name, query)
+            else:
+                current_label = html.escape(row.name)
             if parent_name:
                 folder_label = (
                     f"<span class='breadcrumb-parent'>{parent_label}</span>"
