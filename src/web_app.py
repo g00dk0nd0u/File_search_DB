@@ -207,6 +207,20 @@ h1 {
   padding: 0.95rem 1.1rem;
   margin-bottom: 0.7rem;
 }
+.search-form {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+}
+.toolbar-shell {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+}
 .search-row, .settings-form {
   display: flex;
   flex-wrap: wrap;
@@ -214,26 +228,52 @@ h1 {
   align-items: flex-end;
 }
 .search-row {
-  justify-content: space-between;
+  justify-content: flex-start;
+  gap: 0.65rem;
+  align-items: center;
 }
 .settings-form {
   justify-content: space-between;
 }
+.toolbar-shell .settings-form {
+  justify-content: flex-start;
+  gap: 0.65rem;
+  align-items: center;
+}
 .field {
   display: grid;
   gap: 0.3rem;
+  min-width: 0;
 }
-.field-grow { flex: 1 1 22rem; }
+.field-grow { flex: 1 1 22rem; min-width: 0; }
+.search-form .field:first-child {
+  flex: 0 1 15rem;
+}
+.toolbar-shell .field:first-of-type {
+  flex: 1 1 22rem;
+}
 .search-tools {
   display: inline-flex;
   align-items: center;
-  gap: 0.55rem;
-  padding-left: 0.75rem;
-  border-left: 1px solid var(--border-soft);
+  gap: 0.5rem;
+  padding-left: 0;
+  border-left: 0;
   margin-left: auto;
 }
-.search-input-group { display: flex; }
+.search-form select {
+  width: 100%;
+  max-width: 100%;
+}
+.search-input-group {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+}
 .search-input-group #q {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: none;
   border-radius: 5px 0 0 5px;
   border-right: none;
 }
@@ -241,6 +281,17 @@ h1 {
   height: var(--control-height);
   border-radius: 0 5px 5px 0;
   white-space: nowrap;
+}
+.search-form .nav-link,
+.search-form .theme-toggle,
+.toolbar-shell .nav-link,
+.toolbar-shell .theme-toggle {
+  height: var(--control-height);
+}
+.search-form .theme-toggle,
+.toolbar-shell .theme-toggle {
+  width: var(--control-height);
+  min-width: var(--control-height);
 }
 label {
   font-weight: 600;
@@ -922,7 +973,7 @@ SETTINGS_PAGE_TEMPLATE = Template("""<!doctype html>
   <style>$base_css</style>
 </head>
 <body>
-  <div class="panel">
+  <div class="panel toolbar-shell">
     <form method="post" action="/settings/action" class="settings-form">
       <input type="hidden" name="action" value="choose_root" />
       $return_to_input
