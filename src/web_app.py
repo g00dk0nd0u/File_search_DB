@@ -420,7 +420,19 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
   align-items: flex-start;
 }
 .preview-folder-list {
-  width: 100%;
+  width: min(100%, 34rem);
+  min-height: 16rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--surface-color);
+  padding: 0.65rem 0.75rem;
+  margin: 0 auto;
+}
+.preview-folder-list .children-list {
+  padding: 0;
+}
+.preview-folder-list .children-item {
+  padding: 0.16rem 0;
 }
 .children-panel {
   min-width: 18rem;
@@ -1138,6 +1150,7 @@ document.addEventListener("DOMContentLoaded", function () {
       const listWrap = document.createElement("div");
       listWrap.className = "preview-folder-list";
       listWrap.setAttribute("data-folder-preview-list", "1");
+      listWrap.setAttribute("data-preview-folder-path", folderPath);
       renderChildrenItems(listWrap, payload);
       const previewList = listWrap.querySelector(".children-list");
       if (previewList) {
@@ -1270,10 +1283,11 @@ document.addEventListener("DOMContentLoaded", function () {
       const rootId = detailRow ? detailRow.getAttribute("data-root-id") || "" : "";
       const childType = childLink.getAttribute("data-child-type") || "";
       const path = childLink.getAttribute("data-child-path") || "";
-      const isInPreviewPanel = Boolean(childLink.closest("[data-folder-preview-list='1']"));
-      if (isInPreviewPanel) {
-        if (path) {
-          await openPath(path);
+      const previewFolder = childLink.closest("[data-preview-folder-path]");
+      if (previewFolder) {
+        const previewFolderPath = previewFolder.getAttribute("data-preview-folder-path") || "";
+        if (previewFolderPath) {
+          await openPath(previewFolderPath);
         }
         return;
       }
