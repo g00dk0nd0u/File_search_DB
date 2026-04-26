@@ -627,7 +627,7 @@ tbody tr:hover { background: transparent; }
   height: 38rem;
   min-height: 38rem;
   margin: 0 auto;
-  border: 0;
+  border: 1px solid var(--border-soft);
   border-radius: 8px;
   background: var(--surface-color);
 }
@@ -636,7 +636,7 @@ tbody tr:hover { background: transparent; }
   max-width: min(100%, 34rem);
   max-height: 34rem;
   margin: 0 auto;
-  border: 0;
+  border: 1px solid var(--border-soft);
   border-radius: 8px;
   background: var(--surface-color);
   object-fit: contain;
@@ -718,10 +718,15 @@ tbody tr:hover { background: transparent; }
 }
 .result-table tr[data-row-path]:has(.folder-name[data-expanded="true"]) .folder-cell {
   background: var(--surface-accent-soft);
-  border-color: #BFDBFE;
-  border-left: 4px solid var(--accent-color);
+  border-color: var(--border-soft);
+  border-left: 2px solid var(--accent-color);
   border-radius: 12px 12px 0 0;
-  box-shadow: inset 0 0 0 1px #BFDBFE;
+  box-shadow: none;
+}
+html[data-theme="dark"] .result-table tr[data-row-path]:has(.folder-name[data-expanded="true"]) .folder-cell {
+  border-color: var(--border-color);
+  border-left-color: var(--accent-color);
+  box-shadow: none;
 }
 .result-table tr[data-row-path]:has(.folder-name[data-expanded="true"]) .file-match-badge {
   background: var(--surface-accent);
