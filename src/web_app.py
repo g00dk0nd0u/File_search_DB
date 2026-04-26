@@ -494,7 +494,7 @@ tbody tr:hover { background: transparent; }
 }
 .detail-grid {
   display: grid;
-  grid-template-columns: minmax(18rem, max-content) minmax(16rem, 1fr);
+  grid-template-columns: clamp(18rem, 32%, 22rem) minmax(0, 1fr);
   gap: 0.75rem;
   align-items: start;
 }
@@ -504,6 +504,7 @@ tbody tr:hover { background: transparent; }
 }
 .preview-panel {
   position: relative;
+  width: 100%;
   min-width: 0;
   border: 0;
   border-radius: 0;
@@ -511,7 +512,7 @@ tbody tr:hover { background: transparent; }
   box-shadow: none;
   padding: 0.4rem 0.5rem;
   display: flex;
-  justify-content: flex-start;
+  justify-content: center;
   align-items: flex-start;
 }
 .preview-panel.preview-inactive {
@@ -536,8 +537,8 @@ tbody tr:hover { background: transparent; }
   padding: 0.16rem 0;
 }
 .children-panel {
-  min-width: 18rem;
-  width: max-content;
+  min-width: 0;
+  width: 100%;
   max-width: 100%;
   overflow-x: visible;
   border: 0;
@@ -691,7 +692,7 @@ tbody tr:hover { background: transparent; }
 }
 .pdf-preview-frame {
   display: block;
-  width: min(56%, 31rem);
+  width: min(100%, 31rem);
   height: 38rem;
   min-height: 38rem;
   margin: 0 auto;
@@ -766,7 +767,7 @@ tbody tr:hover { background: transparent; }
   grid-template-columns: minmax(0, 1fr) 8rem 2rem;
   align-items: center;
   gap: 0.75rem;
-  padding: 0.78rem 0.9rem;
+  padding: 0.5rem 0.9rem;
   border: 1px solid var(--border-color);
   border-radius: 12px;
   background: var(--surface-color);
@@ -827,7 +828,7 @@ html[data-theme="dark"] .result-table tr[data-row-path]:has(.folder-name[data-ex
   margin-left: 0;
   min-width: 5.5rem;
   justify-content: center;
-  padding: 0.2rem 0.6rem;
+  padding: 0.16rem 0.56rem;
   border-radius: 999px;
   background: #F1F5F9;
   color: #475569;
@@ -850,6 +851,8 @@ html[data-theme="dark"] .result-table tr[data-row-path]:has(.folder-name[data-ex
 }
 .folder-open-button {
   justify-self: end;
+  width: 1.7rem;
+  height: 1.7rem;
 }
 @media (max-width: 720px) {
   .detail-grid {
