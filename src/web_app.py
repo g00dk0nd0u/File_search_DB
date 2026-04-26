@@ -1134,6 +1134,7 @@ document.addEventListener("DOMContentLoaded", function () {
       }
       const listWrap = document.createElement("div");
       listWrap.className = "preview-folder-list";
+      listWrap.setAttribute("data-folder-preview-list", "1");
       renderChildrenItems(listWrap, payload);
       const openLabel = "Open in Finder";
       panel.replaceChildren(listWrap, createPreviewFolderOpenButton(folderPath, openLabel));
@@ -1261,8 +1262,13 @@ document.addEventListener("DOMContentLoaded", function () {
       const rootId = detailRow ? detailRow.getAttribute("data-root-id") || "" : "";
       const childType = childLink.getAttribute("data-child-type") || "";
       const path = childLink.getAttribute("data-child-path") || "";
+      const isInPreviewPanel = Boolean(childLink.closest("[data-folder-preview-list='1']"));
       if (childType === "dir") {
-        await loadFolderPreview(path, previewPanel, rootId);
+        if (isInPreviewPanel) {
+          await openPath(path);
+        } else {
+          await loadFolderPreview(path, previewPanel, rootId);
+        }
         return;
       }
       await loadPreview(childLink, previewPanel, rootId);
