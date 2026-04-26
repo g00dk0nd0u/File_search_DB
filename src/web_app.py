@@ -1694,7 +1694,8 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            data = target_path.read_bytes()
+            content_length = target_path.stat().st_size
+            file_obj = target_path.open("rb")
         except OSError as exc:
             self.send_error(HTTPStatus.BAD_REQUEST, f"File cannot be read: {exc}")
             return
@@ -1712,9 +1713,17 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             f"inline; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded_filename}",
         )
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Length", str(content_length))
         self.end_headers()
-        self.wfile.write(data)
+        try:
+            with file_obj:
+                while True:
+                    chunk = file_obj.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def _handle_view_image(self, parsed):
         target_path = self._resolve_requested_file(parsed)
