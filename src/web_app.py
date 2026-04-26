@@ -358,6 +358,8 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
 .children-panel,
 .preview-panel {
   min-width: 0;
+}
+.preview-panel {
   border: 1px solid var(--border-soft);
   border-radius: 6px;
   background: var(--surface-color);
@@ -368,6 +370,10 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
   width: max-content;
   max-width: 100%;
   overflow-x: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.35rem 0;
 }
 .children-list {
   list-style: none;
