@@ -620,10 +620,13 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
   background-color: var(--surface-hover);
 }
 .folder-cell {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 8rem 2rem;
   align-items: center;
-  justify-content: space-between;
   gap: 0.75rem;
+}
+.folder-name {
+  justify-self: start;
 }
 .folder-main {
   min-width: 0;
@@ -641,14 +644,23 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
 .file-match-badge {
   display: inline-flex;
   align-items: center;
-  margin-left: 0.5rem;
-  padding: 0.15rem 0.45rem;
+  justify-self: center;
+  margin-left: 0;
+  min-width: 5.5rem;
+  justify-content: center;
+  padding: 0.15rem 0.5rem;
   border-radius: 999px;
   background: var(--surface-muted);
   color: var(--text-subtle);
   font-size: 0.74rem;
   font-weight: 700;
   white-space: nowrap;
+}
+.file-match-badge.is-empty {
+  visibility: hidden;
+}
+.folder-open-button {
+  justify-self: end;
 }
 @media (max-width: 720px) {
   .detail-grid {
@@ -2021,10 +2033,12 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                 )
             else:
                 folder_label = f"<span class='breadcrumb-current'>{current_label}</span>"
-            file_match_badge = ""
-            if getattr(row, "file_match_count", 0):
-                label = "file match" if row.file_match_count == 1 else "file matches"
+            file_match_count = getattr(row, "file_match_count", 0)
+            if file_match_count:
+                label = "file" if row.file_match_count == 1 else "files"
                 file_match_badge = f"<span class='file-match-badge'>{row.file_match_count} {label}</span>"
+            else:
+                file_match_badge = "<span class='file-match-badge is-empty' aria-hidden='true'></span>"
             open_label = "Open in Finder" if sys.platform == "darwin" else "Open Folder"
             lines.append(
                 f"<tr data-row-path='{row_path}' data-root-id='{row.root_id}'>"
