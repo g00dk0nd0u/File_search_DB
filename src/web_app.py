@@ -12,6 +12,7 @@ import mimetypes
 import os
 from pathlib import Path
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -571,6 +572,16 @@ tbody tr:hover { background: transparent; }
   background: var(--surface-hover);
   box-shadow: none;
 }
+.children-link.is-draggable-file {
+  cursor: grab;
+}
+.children-link.is-draggable-file:hover {
+  background: var(--surface-hover);
+}
+.children-link.is-draggable-file.is-dragging-file {
+  opacity: 0.56;
+  cursor: grabbing;
+}
 .folder-preview-list .children-link {
   cursor: pointer;
 }
@@ -717,6 +728,15 @@ tbody tr:hover { background: transparent; }
   background: var(--surface-hover);
   border-color: var(--border-color);
   box-shadow: inset 0 0 0 1px var(--border-color);
+}
+.folder-cell.is-drop-target {
+  background: var(--surface-accent-soft);
+  border-color: #93C5FD;
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.24);
+}
+html[data-theme="dark"] .folder-cell.is-drop-target {
+  border-color: #5B8DEF;
+  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.28);
 }
 .result-table tr[data-row-path]:has(.folder-name[data-expanded="true"]) .folder-cell {
   background: var(--surface-accent-soft);
@@ -1330,6 +1350,10 @@ document.addEventListener("DOMContentLoaded", function () {
       if (item.type === "file" && item.is_match) {
         link.classList.add("is-file-match");
       }
+      if (item.type === "file") {
+        link.classList.add("is-draggable-file");
+        link.setAttribute("draggable", "true");
+      }
       link.href = "#";
       link.setAttribute("data-child-path", item.path || "");
       link.setAttribute("data-child-type", item.type || "");
@@ -1491,6 +1515,23 @@ document.addEventListener("DOMContentLoaded", function () {
   let timerId = null;
   let isComposing = false;
   let isSubmitting = false;
+  let currentDraggedFileLink = null;
+  let currentDraggedFilePath = "";
+
+  const getDropFolderCard = function (eventTarget) {
+    if (!(eventTarget instanceof Element)) {
+      return null;
+    }
+    return eventTarget.closest("[data-drop-folder-path]");
+  };
+
+  const clearDropTargetHighlight = function (card) {
+    if (!(card instanceof HTMLElement)) {
+      return;
+    }
+    card.classList.remove("is-drop-target");
+    delete card.dataset.dragDepth;
+  };
 
   const clearScheduledSubmit = function () {
     if (timerId !== null) {
@@ -1520,6 +1561,123 @@ document.addEventListener("DOMContentLoaded", function () {
     timerId = window.setTimeout(submitForm, AUTO_SUBMIT_DELAY_MS);
   };
 
+  const handleFileDragStart = function (event) {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+    const fileLink = target.closest('[data-child-type="file"][data-child-path]');
+    if (!(fileLink instanceof HTMLAnchorElement)) {
+      return;
+    }
+    const srcPath = fileLink.getAttribute("data-child-path") || "";
+    if (!srcPath || !event.dataTransfer) {
+      event.preventDefault();
+      return;
+    }
+    currentDraggedFileLink = fileLink;
+    currentDraggedFilePath = srcPath;
+    fileLink.classList.add("is-dragging-file");
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", srcPath);
+    event.dataTransfer.setData("application/json", JSON.stringify({ src_path: srcPath }));
+  };
+
+  const handleFileDragEnd = function (_event) {
+    if (currentDraggedFileLink) {
+      currentDraggedFileLink.classList.remove("is-dragging-file");
+    }
+    currentDraggedFileLink = null;
+    currentDraggedFilePath = "";
+    document.querySelectorAll("[data-drop-folder-path].is-drop-target").forEach(function (card) {
+      clearDropTargetHighlight(card);
+    });
+  };
+
+  const handleFolderDragOver = function (event) {
+    const card = getDropFolderCard(event.target);
+    if (!card || !currentDraggedFilePath) {
+      return;
+    }
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "move";
+    }
+  };
+
+  const handleFolderDragEnter = function (event) {
+    const card = getDropFolderCard(event.target);
+    if (!card || !currentDraggedFilePath) {
+      return;
+    }
+    event.preventDefault();
+    const depth = Number(card.dataset.dragDepth || "0") + 1;
+    card.dataset.dragDepth = String(depth);
+    card.classList.add("is-drop-target");
+  };
+
+  const handleFolderDragLeave = function (event) {
+    const card = getDropFolderCard(event.target);
+    if (!card) {
+      return;
+    }
+    const nextDepth = Math.max(0, Number(card.dataset.dragDepth || "0") - 1);
+    if (nextDepth === 0) {
+      clearDropTargetHighlight(card);
+      return;
+    }
+    card.dataset.dragDepth = String(nextDepth);
+  };
+
+  const moveFile = async function (srcPath, dstFolderPath) {
+    const response = await fetch("/move_file", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        src_path: srcPath,
+        dst_folder_path: dstFolderPath
+      })
+    });
+    const payload = await response.json().catch(function () {
+      return { success: false, message: "Could not move the file." };
+    });
+    if (!response.ok || !payload || payload.success !== true) {
+      throw new Error(payload && payload.message ? String(payload.message) : "Could not move the file.");
+    }
+    return payload;
+  };
+
+  const handleFolderDrop = async function (event) {
+    const card = getDropFolderCard(event.target);
+    if (!card || !currentDraggedFilePath) {
+      return;
+    }
+    event.preventDefault();
+    clearDropTargetHighlight(card);
+    const dstFolderPath = card.getAttribute("data-drop-folder-path") || "";
+    const srcPath = event.dataTransfer ? (event.dataTransfer.getData("text/plain") || currentDraggedFilePath) : currentDraggedFilePath;
+    if (!dstFolderPath) {
+      return;
+    }
+    if (!window.confirm("Move this file to the selected folder?")) {
+      return;
+    }
+    try {
+      await moveFile(srcPath, dstFolderPath);
+      submitForm();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Could not move the file.");
+    }
+  };
+
+  document.addEventListener("dragstart", handleFileDragStart);
+  document.addEventListener("dragend", handleFileDragEnd);
+  document.addEventListener("dragover", handleFolderDragOver);
+  document.addEventListener("dragenter", handleFolderDragEnter);
+  document.addEventListener("dragleave", handleFolderDragLeave);
+  document.addEventListener("drop", function (event) {
+    void handleFolderDrop(event);
+  });
   queryInput.addEventListener("input", scheduleSubmit);
   rootSelect.addEventListener("change", submitForm);
   queryInput.addEventListener("compositionstart", function () {
@@ -1570,6 +1728,9 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/settings/action":
             self._handle_settings_action()
+            return
+        if parsed.path == "/move_file":
+            self._handle_move_file()
             return
         if parsed.path == "/ping":
             self._handle_ping()
@@ -1711,6 +1872,61 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             self.server.cancel_pending_shutdown()
         self.send_response(HTTPStatus.NO_CONTENT)
         self.end_headers()
+
+    def _handle_move_file(self):
+        try:
+            payload = self._read_json_body()
+            src_value = str(payload.get("src_path", "")).strip()
+            dst_folder_value = str(payload.get("dst_folder_path", "")).strip()
+
+            if not src_value:
+                raise ValueError("src_path is required")
+            if not dst_folder_value:
+                raise ValueError("dst_folder_path is required")
+
+            src_path = Path(src_value).expanduser().resolve(strict=False)
+            dst_folder_path = Path(dst_folder_value).expanduser().resolve(strict=False)
+
+            if not src_path.exists():
+                raise ValueError("Source path not found.")
+            if not src_path.is_file():
+                raise ValueError("Source path is not a file.")
+            if not dst_folder_path.exists():
+                raise ValueError("Destination folder not found.")
+            if not dst_folder_path.is_dir():
+                raise ValueError("Destination path is not a folder.")
+            if src_path.parent == dst_folder_path:
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "success": True,
+                        "message": "File is already in the selected folder.",
+                        "src_path": str(src_path),
+                        "dst_path": str(src_path),
+                    },
+                )
+                return
+
+            dst_path = dst_folder_path / src_path.name
+            if dst_path.exists():
+                raise ValueError("A file with the same name already exists in the destination folder.")
+
+            moved_path = Path(shutil.move(str(src_path), str(dst_folder_path))).resolve(strict=False)
+            self._send_json(
+                HTTPStatus.OK,
+                {
+                    "success": True,
+                    "message": "File moved successfully.",
+                    "src_path": str(src_path),
+                    "dst_path": str(moved_path),
+                },
+            )
+        except ValueError as exc:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"success": False, "message": str(exc)})
+        except OSError as exc:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"success": False, "message": str(exc)})
+        except Exception as exc:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"success": False, "message": str(exc)})
 
     def _handle_shutdown(self):
         if hasattr(self.server, "schedule_shutdown"):
@@ -2114,6 +2330,19 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         payload = self.rfile.read(length).decode("utf-8")
         return parse_qs(payload)
 
+    def _read_json_body(self):
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length <= 0:
+            raise ValueError("Request body is required")
+        payload = self.rfile.read(length).decode("utf-8")
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Request body must be valid JSON") from exc
+        if not isinstance(data, dict):
+            raise ValueError("JSON body must be an object")
+        return data
+
     @staticmethod
     def _require_root(conn: sqlite3.Connection, params):
         root_id = int(params.get("root_id", ["0"])[0] or "0")
@@ -2230,7 +2459,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             lines.append(
                 f"<tr data-row-path='{row_path}' data-root-id='{row.root_id}'>"
                 "<td>"
-                "<div class='folder-cell'>"
+                f"<div class='folder-cell' data-drop-folder-path='{row_path}'>"
                 f"<a class='folder-name' data-expand-toggle='1' data-expanded='false' data-root-id='{row.root_id}' data-expand-path='{row_path}' href='#'>{folder_label}</a>"
                 f"{file_match_badge}"
                 f"<button type='button' class='folder-open-button' data-open-folder-path='{row_path}' aria-label='{open_label}' title='Open folder'></button>"
