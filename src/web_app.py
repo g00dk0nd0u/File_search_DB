@@ -216,6 +216,8 @@ h1 {
   display: inline-flex;
   align-items: center;
   gap: 0.55rem;
+  padding-left: 0.75rem;
+  border-left: 1px solid var(--border-soft);
   margin-left: auto;
 }
 .search-input-group { display: flex; }
@@ -322,6 +324,17 @@ tbody tr:hover { background: var(--surface-hover); }
 }
 .folder-name[data-expanded="true"] {
   background-color: var(--surface-hover);
+}
+.breadcrumb-parent {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.breadcrumb-separator {
+  color: var(--text-subtle);
+  margin: 0 0.35rem;
+}
+.breadcrumb-current {
+  font-weight: 700;
 }
 tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
   border-left: 2px solid var(--accent-color);
@@ -474,8 +487,23 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
 }
 .children-link.is-active {
   background: var(--surface-hover);
+  border-left: 3px solid var(--accent-color);
   border-radius: 4px;
-  padding: 0.05rem 0.2rem;
+  padding: 0.08rem 0.35rem 0.08rem 0.3rem;
+  font-weight: 700;
+}
+.children-link.is-active .children-name {
+  color: var(--text-strong);
+}
+.file-ext-badge {
+  margin-left: 0.35rem;
+  padding: 0.05rem 0.28rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  color: var(--text-subtle);
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.2;
 }
 .children-empty,
 .children-loading,
@@ -1090,6 +1118,14 @@ document.addEventListener("DOMContentLoaded", function () {
       name.className = "children-name";
       name.textContent = item.type === "dir" ? "/" + (item.name || item.path || "(unknown)") : (item.name || item.path || "(unknown)");
       link.appendChild(name);
+
+      const extMatch = String(item.name || item.path || "").match(/\\.([^.]+)$/);
+      if (item.type === "file" && extMatch) {
+        const badge = document.createElement("span");
+        badge.className = "file-ext-badge";
+        badge.textContent = extMatch[1].toUpperCase();
+        link.appendChild(badge);
+      }
 
       row.appendChild(link);
 
@@ -1880,7 +1916,16 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         for row in rows:
             parent_name = Path(row.parent_path).name or row.parent_path
             row_path = html.escape(row.path, quote=True)
-            folder_label = f"{html.escape(parent_name)}/{cls._highlight_text(row.name, query)}"
+            parent_label = html.escape(parent_name)
+            current_label = cls._highlight_text(row.name, query)
+            if parent_name:
+                folder_label = (
+                    f"<span class='breadcrumb-parent'>{parent_label}</span>"
+                    "<span class='breadcrumb-separator'>›</span>"
+                    f"<span class='breadcrumb-current'>{current_label}</span>"
+                )
+            else:
+                folder_label = f"<span class='breadcrumb-current'>{current_label}</span>"
             open_label = "Open in Finder" if sys.platform == "darwin" else "Open Folder"
             lines.append(
                 f"<tr data-row-path='{row_path}' data-root-id='{row.root_id}'>"
