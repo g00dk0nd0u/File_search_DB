@@ -144,7 +144,7 @@ body {
   font-family: "Hiragino Sans", "Yu Gothic UI", sans-serif;
   margin: 0;
   padding: 1.5rem 1rem 2rem;
-  max-width: 1100px;
+  max-width: min(1500px, calc(100vw - 2rem));
   margin-inline: auto;
   background: var(--bg-color);
   color: var(--text-color);
@@ -494,7 +494,7 @@ tbody tr:hover { background: transparent; }
 }
 .detail-grid {
   display: grid;
-  grid-template-columns: clamp(18rem, 32%, 22rem) minmax(0, 1fr);
+  grid-template-columns: clamp(20rem, 38%, 34rem) minmax(0, 1fr);
   gap: 0.75rem;
   align-items: start;
 }
@@ -560,23 +560,25 @@ tbody tr:hover { background: transparent; }
 }
 .children-link {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.35rem;
   color: var(--text-color);
   text-decoration: none;
   font-weight: 500;
   width: 100%;
+  min-width: 0;
   padding: 0.38rem 0.55rem;
   border-left: 3px solid transparent;
   border-radius: 10px;
   transition: background-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease, border-color 0.15s ease;
-  white-space: nowrap;
+  white-space: normal;
 }
 .children-icon {
   position: relative;
   flex: 0 0 1rem;
   width: 1rem;
   height: 1rem;
+  margin-top: 0.12rem;
   color: var(--text-subtle);
 }
 .children-icon.is-dir::before {
@@ -622,7 +624,13 @@ tbody tr:hover { background: transparent; }
   background: var(--surface-color);
 }
 .children-name {
-  white-space: nowrap;
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35;
 }
 .children-link:hover {
   background: var(--surface-hover);
