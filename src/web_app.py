@@ -454,19 +454,23 @@ tbody tr:hover { background: transparent; }
 .preview-panel {
   position: relative;
   min-width: 0;
-  min-height: 17.5rem;
   border: 0;
   border-radius: 0;
   background: var(--surface-color);
   box-shadow: none;
   padding: 0.4rem 0.5rem;
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: flex-start;
+}
+.preview-panel.preview-inactive {
+  min-height: 0;
+}
+.preview-panel.preview-active {
+  min-height: 0;
 }
 .preview-folder-list {
   width: min(100%, 34rem);
-  min-height: 16rem;
   border: 0;
   border-radius: 0;
   background: var(--surface-color);
@@ -1079,10 +1083,22 @@ document.addEventListener("DOMContentLoaded", function () {
   };
 
   const renderPreviewMessage = function (panel, message, className) {
+    if (panel) {
+      panel.classList.remove("preview-active");
+      panel.classList.add("preview-inactive");
+    }
     const messageElement = document.createElement("div");
     messageElement.className = className;
     messageElement.textContent = message;
     panel.replaceChildren(messageElement);
+  };
+
+  const setPreviewPanelActive = function (panel) {
+    if (!panel) {
+      return;
+    }
+    panel.classList.remove("preview-inactive");
+    panel.classList.add("preview-active");
   };
 
   const createPreviewOpenButton = function (href, label) {
@@ -1140,6 +1156,7 @@ document.addEventListener("DOMContentLoaded", function () {
     frame.src = pdfViewUrl;
     frame.title = path.split(/[\\\\/]/).pop() || path;
     const button = createPreviewOpenButton(pdfViewUrl, "Open PDF in new tab");
+    setPreviewPanelActive(panel);
     panel.replaceChildren(frame, button);
   };
 
@@ -1150,6 +1167,7 @@ document.addEventListener("DOMContentLoaded", function () {
     image.alt = path.split(/[\\\\/]/).pop() || path;
     const button = createPreviewOpenButton(buildImageViewUrl(rootId, path), "Open image in new tab");
     image.onload = function () {
+      setPreviewPanelActive(panel);
       panel.replaceChildren(image, button);
     };
     image.onerror = function () {
@@ -1163,6 +1181,7 @@ document.addEventListener("DOMContentLoaded", function () {
     note.className = "preview-note";
     note.textContent = "Office files cannot be previewed directly in this browser. Open the file in a new tab or desktop app.";
     const button = createPreviewOpenButton(buildFileUrl(rootId, path), "Open file in new tab");
+    setPreviewPanelActive(panel);
     panel.replaceChildren(note, button);
   };
 
@@ -1219,6 +1238,7 @@ document.addEventListener("DOMContentLoaded", function () {
         note.className = "preview-note";
         note.textContent = payload.error || "No previewable text content is available.";
         const button = createPreviewOpenButton(buildFileUrl(rootId, path), "Open file in new tab");
+        setPreviewPanelActive(panel);
         panel.replaceChildren(note, button);
         return;
       }
@@ -1227,6 +1247,7 @@ document.addEventListener("DOMContentLoaded", function () {
       pre.className = "preview-content";
       pre.textContent = payload.content;
       const button = createPreviewOpenButton(buildFileUrl(rootId, path), "Open file in new tab");
+      setPreviewPanelActive(panel);
       panel.replaceChildren(pre, button);
     } catch (_error) {
       renderPreviewMessage(panel, "Could not load preview.", "preview-error");
@@ -1274,6 +1295,7 @@ document.addEventListener("DOMContentLoaded", function () {
         previewList.setAttribute("data-folder-preview-list", "1");
       }
       const openLabel = "Open in Finder";
+      setPreviewPanelActive(panel);
       panel.replaceChildren(listWrap, createPreviewFolderOpenButton(folderPath, openLabel));
     } catch (_error) {
       renderPreviewMessage(panel, "Could not load items.", "preview-error");
@@ -2488,7 +2510,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                 "<div class='detail-shell'>"
                 "<div class='detail-grid'>"
                 "<div class='children-panel' data-child-panel='1'></div>"
-                "<div class='preview-panel' data-preview-panel='1'><div class='preview-empty'>Select a file to preview it here.</div></div>"
+                "<div class='preview-panel preview-inactive' data-preview-panel='1'><div class='preview-empty'>Select a file to preview it here.</div></div>"
                 "</div>"
                 "</div>"
                 "</td>"

@@ -268,6 +268,8 @@ class WebUiTests(unittest.TestCase):
         self.assertIn("buildFileUrl", CLIENT_SCRIPT)
         self.assertIn("pdf-preview-frame", CLIENT_SCRIPT)
         self.assertIn('"/file?" + query.toString()', CLIENT_SCRIPT)
+        self.assertIn('panel.classList.add("preview-inactive")', CLIENT_SCRIPT)
+        self.assertIn('panel.classList.add("preview-active")', CLIENT_SCRIPT)
 
     def test_parse_search_inputs(self):
         root_id, query = FileSearchHandler._parse_search_inputs("root_id=12&q=Project")
@@ -300,7 +302,7 @@ class WebUiTests(unittest.TestCase):
         self.assertIn("data-open-folder-path='/tmp/ProjectDocs'", html_doc)
         self.assertIn("class='result-detail-row'", html_doc)
         self.assertIn("data-child-panel='1'", html_doc)
-        self.assertIn("data-preview-panel='1'", html_doc)
+        self.assertIn("class='preview-panel preview-inactive' data-preview-panel='1'", html_doc)
         self.assertIn("colspan='1'", html_doc)
         self.assertNotIn("<thead>", html_doc)
         self.assertNotIn("<th>親フォルダ</th><th>フォルダ</th>", html_doc)
