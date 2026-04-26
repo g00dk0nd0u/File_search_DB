@@ -80,6 +80,7 @@ BASE_CSS = """
   --accent-hover: #1D4ED8;
   --border-color: #E2E8F0;
   --border-soft: #EDF2F7;
+  --preview-image-border: #D6DEE8;
   --border-row: #EDF2F7;
   --border-input: #CBD5E1;
   --border-button: #CBD5E1;
@@ -105,8 +106,8 @@ html[data-theme="dark"] {
   --surface-muted: #1f242d;
   --surface-soft: #121821;
   --surface-hover: #202833;
-  --surface-accent-soft: #0F1E33;
-  --surface-accent: #1E3A5F;
+  --surface-accent-soft: #121A24;
+  --surface-accent: #1F2B38;
   --text-color: #e6edf3;
   --text-strong: #f0f6fc;
   --text-muted: #9da7b3;
@@ -116,9 +117,10 @@ html[data-theme="dark"] {
   --accent-color: #3B82F6;
   --accent-strong: #60A5FA;
   --accent-hover: #2563EB;
-  --accent-file-text: #DBEAFE;
+  --accent-file-text: #E6EDF3;
   --border-color: #30363d;
   --border-soft: #30363d;
+  --preview-image-border: #3A424C;
   --border-row: #2d333b;
   --border-input: #30363d;
   --border-button: #30363d;
@@ -627,7 +629,7 @@ tbody tr:hover { background: transparent; }
   height: 38rem;
   min-height: 38rem;
   margin: 0 auto;
-  border: 1px solid var(--border-soft);
+  border: 1px solid var(--preview-image-border);
   border-radius: 8px;
   background: var(--surface-color);
 }
@@ -636,7 +638,7 @@ tbody tr:hover { background: transparent; }
   max-width: min(100%, 34rem);
   max-height: 34rem;
   margin: 0 auto;
-  border: 1px solid var(--border-soft);
+  border: 2px solid var(--preview-image-border);
   border-radius: 8px;
   background: var(--surface-color);
   object-fit: contain;
@@ -718,14 +720,14 @@ tbody tr:hover { background: transparent; }
 }
 .result-table tr[data-row-path]:has(.folder-name[data-expanded="true"]) .folder-cell {
   background: var(--surface-accent-soft);
-  border-color: var(--border-soft);
+  border-color: var(--border-color);
   border-left: 2px solid var(--accent-color);
   border-radius: 12px 12px 0 0;
   box-shadow: none;
 }
 html[data-theme="dark"] .result-table tr[data-row-path]:has(.folder-name[data-expanded="true"]) .folder-cell {
   border-color: var(--border-color);
-  border-left-color: var(--accent-color);
+  border-left-color: #3B82F6;
   box-shadow: none;
 }
 .result-table tr[data-row-path]:has(.folder-name[data-expanded="true"]) .file-match-badge {
