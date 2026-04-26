@@ -507,6 +507,9 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
 .children-link:hover {
   text-decoration: underline;
 }
+.folder-preview-list .children-link {
+  cursor: pointer;
+}
 .children-link.is-file-match {
   background: var(--surface-hover);
   border-radius: 4px;
@@ -1136,6 +1139,11 @@ document.addEventListener("DOMContentLoaded", function () {
       listWrap.className = "preview-folder-list";
       listWrap.setAttribute("data-folder-preview-list", "1");
       renderChildrenItems(listWrap, payload);
+      const previewList = listWrap.querySelector(".children-list");
+      if (previewList) {
+        previewList.classList.add("folder-preview-list");
+        previewList.setAttribute("data-folder-preview-list", "1");
+      }
       const openLabel = "Open in Finder";
       panel.replaceChildren(listWrap, createPreviewFolderOpenButton(folderPath, openLabel));
     } catch (_error) {
@@ -1263,12 +1271,14 @@ document.addEventListener("DOMContentLoaded", function () {
       const childType = childLink.getAttribute("data-child-type") || "";
       const path = childLink.getAttribute("data-child-path") || "";
       const isInPreviewPanel = Boolean(childLink.closest("[data-folder-preview-list='1']"));
-      if (childType === "dir") {
-        if (isInPreviewPanel) {
+      if (isInPreviewPanel) {
+        if (path) {
           await openPath(path);
-        } else {
-          await loadFolderPreview(path, previewPanel, rootId);
         }
+        return;
+      }
+      if (childType === "dir") {
+        await loadFolderPreview(path, previewPanel, rootId);
         return;
       }
       await loadPreview(childLink, previewPanel, rootId);
