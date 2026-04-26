@@ -60,6 +60,7 @@ BASE_CSS = """
 *, *::before, *::after { box-sizing: border-box; }
 :root {
   color-scheme: light;
+  --control-height: 2.45rem;
   --bg-color: #f4f5f7;
   --surface-color: #ffffff;
   --surface-muted: #f7f9fc;
@@ -226,6 +227,7 @@ h1 {
   border-right: none;
 }
 .search-input-group button {
+  height: var(--control-height);
   border-radius: 0 5px 5px 0;
   white-space: nowrap;
 }
@@ -249,10 +251,12 @@ label {
 input[type=text], select {
   width: 18rem;
   max-width: 78vw;
-  padding: 0.45rem 0.65rem;
+  height: var(--control-height);
+  padding: 0 0.65rem;
   border: 1px solid var(--border-input);
   border-radius: 5px;
   font-size: 0.9375rem;
+  line-height: var(--control-height);
   color: var(--text-color);
   background: var(--surface-soft);
 }
