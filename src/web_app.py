@@ -90,8 +90,8 @@ BASE_CSS = """
   --notice-error-border: #edc7c7;
   --notice-error-text: #8b2e2e;
   --shadow-ring: 0 0 0 3px rgba(59, 110, 165, 0.15);
-  --mark-bg: #ffdca8;
-  --mark-text: inherit;
+  --mark-bg: #ffc66d;
+  --mark-text: #1f3656;
 }
 html[data-theme="dark"] {
   color-scheme: dark;
@@ -125,8 +125,8 @@ html[data-theme="dark"] {
   --notice-error-border: #5c2f35;
   --notice-error-text: #ffd7d5;
   --shadow-ring: 0 0 0 3px rgba(110, 118, 129, 0.22);
-  --mark-bg: #f2cc60;
-  --mark-text: #24292f;
+  --mark-bg: #d99a2b;
+  --mark-text: #111827;
 }
 body {
   font-family: "Hiragino Sans", "Yu Gothic UI", sans-serif;
@@ -504,6 +504,12 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
 .children-link:hover {
   text-decoration: underline;
 }
+.children-link.is-file-match {
+  background: var(--surface-hover);
+  border-radius: 4px;
+  padding: 0.08rem 0.35rem 0.08rem 0.3rem;
+  font-weight: 700;
+}
 .children-link.is-active {
   background: var(--surface-hover);
   border-left: 3px solid var(--accent-color);
@@ -632,6 +638,18 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
   font-size: 0.8125rem;
   font-weight: 600;
 }
+.file-match-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.5rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text-subtle);
+  font-size: 0.74rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
 @media (max-width: 720px) {
   .detail-grid {
     grid-template-columns: 1fr;
@@ -683,8 +701,9 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
 mark {
   background: var(--mark-bg);
   color: var(--mark-text);
-  border-radius: 2px;
-  padding: 0 2px;
+  border-radius: 3px;
+  padding: 0 3px;
+  font-weight: 700;
 }
 """
 
@@ -1086,6 +1105,10 @@ document.addEventListener("DOMContentLoaded", function () {
     panel.appendChild(loading);
 
     const query = new URLSearchParams({ root_id: rootId, path: folderPath });
+    const currentSearchQuery = document.getElementById("q");
+    if (currentSearchQuery && currentSearchQuery.value.trim()) {
+      query.set("q", currentSearchQuery.value.trim());
+    }
     try {
       const response = await fetch("/children?" + query.toString(), { method: "GET", cache: "no-store" });
       const payload = await response.json();
@@ -1131,6 +1154,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
       const link = document.createElement("a");
       link.className = "children-link";
+      if (item.type === "file" && item.is_match) {
+        link.classList.add("is-file-match");
+      }
       link.href = "#";
       link.setAttribute("data-child-path", item.path || "");
       link.setAttribute("data-child-type", item.type || "");
@@ -1142,7 +1168,11 @@ document.addEventListener("DOMContentLoaded", function () {
 
       const name = document.createElement("span");
       name.className = "children-name";
-      name.textContent = item.type === "dir" ? "/" + (item.name || item.path || "(unknown)") : (item.name || item.path || "(unknown)");
+      if (item.display_html) {
+        name.innerHTML = item.display_html;
+      } else {
+        name.textContent = item.type === "dir" ? "/" + (item.name || item.path || "(unknown)") : (item.name || item.path || "(unknown)");
+      }
       link.appendChild(name);
 
       row.appendChild(link);
@@ -1516,6 +1546,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         params = parse_qs(parsed.query)
         root_value = params.get("root_id", [""])[0].strip()
         path_value = params.get("path", [""])[0].strip()
+        query = params.get("q", [""])[0].strip()
         if not root_value:
             self._send_json(HTTPStatus.BAD_REQUEST, {"path": path_value, "items": [], "error": "root_id is required"})
             return
@@ -1556,7 +1587,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.FORBIDDEN, {"path": str(target_path), "items": [], "error": "Path is outside root"})
                 return
 
-            items = self._collect_children_items(target_path)
+            items = self._collect_children_items(target_path, query)
             self._send_json(HTTPStatus.OK, {"path": str(target_path), "items": items, "error": None})
         except OSError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"path": path_value, "items": [], "error": "Path cannot be resolved"})
@@ -1783,7 +1814,17 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         )
 
     @staticmethod
-    def _collect_children_items(folder_path: Path):
+    def _query_matches_text(text: str, query: str) -> bool:
+        parsed_query = parse_folder_query(query)
+        if not parsed_query.positive_groups:
+            return False
+        value = (text or "").casefold()
+        if any(term.casefold() in value for term in parsed_query.excluded_terms):
+            return False
+        return any(all(term.casefold() in value for term in group) for group in parsed_query.positive_groups)
+
+    @staticmethod
+    def _collect_children_items(folder_path: Path, query: str = ""):
         typed_items = []
         try:
             entries = list(folder_path.iterdir())
@@ -1800,11 +1841,22 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                 item_type = "file"
             if not item_type:
                 continue
+            display_name = entry.name
+            if item_type == "dir":
+                display_html = "/" + FileSearchHandler._highlight_text(display_name, query)
+            else:
+                display_html = FileSearchHandler._highlight_text(display_name, query)
             typed_items.append(
                 (
                     0 if item_type == "dir" else 1,
                     entry.name.casefold(),
-                    {"name": entry.name, "path": str(entry.resolve()), "type": item_type},
+                    {
+                        "name": entry.name,
+                        "path": str(entry.resolve()),
+                        "type": item_type,
+                        "is_match": item_type == "file" and FileSearchHandler._query_matches_text(entry.name, query),
+                        "display_html": display_html,
+                    },
                 )
             )
         typed_items.sort(key=lambda item: (item[0], item[1]))
@@ -1944,12 +1996,17 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                 )
             else:
                 folder_label = f"<span class='breadcrumb-current'>{current_label}</span>"
+            file_match_badge = ""
+            if getattr(row, "file_match_count", 0):
+                label = "file match" if row.file_match_count == 1 else "file matches"
+                file_match_badge = f"<span class='file-match-badge'>{row.file_match_count} {label}</span>"
             open_label = "Open in Finder" if sys.platform == "darwin" else "Open Folder"
             lines.append(
                 f"<tr data-row-path='{row_path}' data-root-id='{row.root_id}'>"
                 "<td>"
                 "<div class='folder-cell'>"
                 f"<a class='folder-name' data-expand-toggle='1' data-expanded='false' data-root-id='{row.root_id}' data-expand-path='{row_path}' href='#'>{folder_label}</a>"
+                f"{file_match_badge}"
                 f"<button type='button' class='folder-open-button' data-open-folder-path='{row_path}' aria-label='{open_label}' title='{open_label}'></button>"
                 "</div>"
                 "</td>"

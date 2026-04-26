@@ -8,7 +8,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, List, Optional, Union
+from typing import Dict, Iterable, List, Optional, Tuple, Union
 
 
 @dataclass(frozen=True)
@@ -31,6 +31,9 @@ class FolderRecord:
     depth: int
     updated_at: str
     match_kind: str
+    file_match_count: int = 0
+    matched_file_names: Tuple[str, ...] = ()
+    matched_file_paths: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -64,8 +67,21 @@ SCHEMA_SQL = """
         FOREIGN KEY(root_id) REFERENCES roots(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        root_id INTEGER NOT NULL,
+        folder_path TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(root_id, file_path),
+        FOREIGN KEY(root_id) REFERENCES roots(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_folders_root_name ON folders(root_id, name);
     CREATE INDEX IF NOT EXISTS idx_folders_root_path ON folders(root_id, path);
+    CREATE INDEX IF NOT EXISTS idx_files_root_name ON files(root_id, file_name);
+    CREATE INDEX IF NOT EXISTS idx_files_root_folder ON files(root_id, folder_path);
 """
 
 
@@ -83,6 +99,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
         PRAGMA foreign_keys=OFF;
+        DROP TABLE IF EXISTS files;
         DROP TABLE IF EXISTS folders;
         DROP TABLE IF EXISTS roots;
         """
@@ -178,15 +195,23 @@ def scan_root(conn: sqlite3.Connection, root_id: int) -> int:
 
     root_path = _normalize_root_path(root.root_path)
     now = _now()
-    rows = list(_iter_folder_rows(root_path, now))
+    folder_rows, file_rows = _scan_rows(root_path, now)
 
     conn.execute("DELETE FROM folders WHERE root_id = ?", (root_id,))
+    conn.execute("DELETE FROM files WHERE root_id = ?", (root_id,))
     conn.executemany(
         """
         INSERT INTO folders(root_id, name, path, parent_path, depth, updated_at)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
-        [(root_id, name, path, parent_path, depth, updated_at) for name, path, parent_path, depth, updated_at in rows],
+        [(root_id, name, path, parent_path, depth, updated_at) for name, path, parent_path, depth, updated_at in folder_rows],
+    )
+    conn.executemany(
+        """
+        INSERT INTO files(root_id, folder_path, file_path, file_name, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [(root_id, folder_path, file_path, file_name, updated_at) for folder_path, file_path, file_name, updated_at in file_rows],
     )
     conn.execute(
         """
@@ -194,9 +219,9 @@ def scan_root(conn: sqlite3.Connection, root_id: int) -> int:
         SET last_scanned_at = ?, folder_count = ?
         WHERE id = ?
         """,
-        (now, len(rows), root_id),
+        (now, len(folder_rows), root_id),
     )
-    return len(rows)
+    return len(folder_rows)
 
 
 def search_folders(conn: sqlite3.Connection, root_id: int, query: str, limit: int = 100) -> List[FolderRecord]:
@@ -204,16 +229,12 @@ def search_folders(conn: sqlite3.Connection, root_id: int, query: str, limit: in
     parsed_query = parse_folder_query(query)
     if not parsed_query.positive_groups and not parsed_query.excluded_terms:
         return []
+    root = get_root(conn, root_id)
+    if root is None:
+        return []
 
-    positive_terms = sorted({term for group in parsed_query.positive_groups for term in group}, key=str.casefold)
-    where_parts = ["f.root_id = ?"]
-    params: List[object] = [root_id]
-    if positive_terms:
-        where_parts.append("(" + " OR ".join("f.name LIKE ?" for _ in positive_terms) + ")")
-        params.extend(f"%{term}%" for term in positive_terms)
-
-    rows = conn.execute(
-        f"""
+    folder_rows = conn.execute(
+        """
         SELECT
             f.root_id,
             r.display_name,
@@ -225,22 +246,121 @@ def search_folders(conn: sqlite3.Connection, root_id: int, query: str, limit: in
             'name' AS match_kind
         FROM folders f
         JOIN roots r ON r.id = f.root_id
-        WHERE {" AND ".join(where_parts)}
+        WHERE f.root_id = ?
         ORDER BY
             f.depth,
             f.name COLLATE NOCASE,
             f.path COLLATE NOCASE
         """,
-        params,
+        (root_id,),
     ).fetchall()
-    matched_rows = []
-    for row in rows:
+
+    folder_records: Dict[str, FolderRecord] = {}
+    for row in folder_rows:
         record = _folder_from_row(row)
+        folder_records[record.path] = record
+
+    file_hits: Dict[str, Dict[str, object]] = {}
+    if parsed_query.positive_groups:
+        file_rows = conn.execute(
+            """
+            SELECT folder_path, file_path, file_name
+            FROM files
+            WHERE root_id = ?
+            ORDER BY file_name COLLATE NOCASE, file_path COLLATE NOCASE
+            """,
+            (root_id,),
+        ).fetchall()
+        for folder_path, file_path, file_name in file_rows:
+            if not _matches_parsed_query(str(file_name), parsed_query):
+                continue
+            bucket = file_hits.setdefault(
+                str(folder_path),
+                {"count": 0, "names": [], "paths": []},
+            )
+            bucket["count"] = int(bucket["count"]) + 1
+            names = bucket["names"]
+            paths = bucket["paths"]
+            if str(file_name) not in names:
+                names.append(str(file_name))
+            paths.append(str(file_path))
+
+    matched_rows: List[FolderRecord] = []
+    seen_paths = set()
+
+    root_folder_name = Path(root.root_path).name or root.display_name
+    root_file_info = file_hits.get(root.root_path)
+    if _matches_parsed_query(root_folder_name, parsed_query):
+        matched_rows.append(
+            FolderRecord(
+                root_id=root.id,
+                root_name=root.display_name,
+                name=root_folder_name,
+                path=root.root_path,
+                parent_path=str(Path(root.root_path).parent),
+                depth=0,
+                updated_at=root.last_scanned_at,
+                match_kind="name+file" if root_file_info else "name",
+                file_match_count=int(root_file_info["count"]) if root_file_info else 0,
+                matched_file_names=tuple(root_file_info["names"]) if root_file_info else (),
+                matched_file_paths=tuple(root_file_info["paths"]) if root_file_info else (),
+            )
+        )
+        seen_paths.add(root.root_path)
+
+    for record in folder_records.values():
         if _matches_parsed_query(record.name, parsed_query):
-            matched_rows.append(record)
-            if len(matched_rows) >= limit:
-                break
-    return matched_rows
+            file_info = file_hits.get(record.path)
+            matched_rows.append(
+                FolderRecord(
+                    root_id=record.root_id,
+                    root_name=record.root_name,
+                    name=record.name,
+                    path=record.path,
+                    parent_path=record.parent_path,
+                    depth=record.depth,
+                    updated_at=record.updated_at,
+                    match_kind="name+file" if file_info else "name",
+                    file_match_count=int(file_info["count"]) if file_info else 0,
+                    matched_file_names=tuple(file_info["names"]) if file_info else (),
+                    matched_file_paths=tuple(file_info["paths"]) if file_info else (),
+                )
+            )
+            seen_paths.add(record.path)
+    for folder_path, file_info in file_hits.items():
+        if folder_path in seen_paths:
+            continue
+        record = folder_records.get(folder_path)
+        if record is None and folder_path == root.root_path:
+            record = FolderRecord(
+                root_id=root.id,
+                root_name=root.display_name,
+                name=root_folder_name,
+                path=root.root_path,
+                parent_path=str(Path(root.root_path).parent),
+                depth=0,
+                updated_at=root.last_scanned_at,
+                match_kind="file",
+            )
+        if record is None:
+            continue
+        matched_rows.append(
+            FolderRecord(
+                root_id=record.root_id,
+                root_name=record.root_name,
+                name=record.name,
+                path=record.path,
+                parent_path=record.parent_path,
+                depth=record.depth,
+                updated_at=record.updated_at,
+                match_kind="file",
+                file_match_count=int(file_info["count"]),
+                matched_file_names=tuple(file_info["names"]),
+                matched_file_paths=tuple(file_info["paths"]),
+            )
+        )
+    matched_rows.sort(key=lambda record: (record.depth, record.name.casefold(), record.path.casefold()))
+    return matched_rows[:limit]
 
 
 def parse_folder_query(query: str) -> ParsedFolderQuery:
@@ -271,8 +391,8 @@ def parse_folder_query(query: str) -> ParsedFolderQuery:
     return ParsedFolderQuery(positive_groups, excluded_terms)
 
 
-def _matches_parsed_query(folder_name: str, query: ParsedFolderQuery) -> bool:
-    name = folder_name.casefold()
+def _matches_parsed_query(text: str, query: ParsedFolderQuery) -> bool:
+    name = text.casefold()
     if any(term.casefold() in name for term in query.excluded_terms):
         return False
     if not query.positive_groups:
@@ -280,19 +400,28 @@ def _matches_parsed_query(folder_name: str, query: ParsedFolderQuery) -> bool:
     return any(all(term.casefold() in name for term in group) for group in query.positive_groups)
 
 
-def _iter_folder_rows(root_path: Path, updated_at: str) -> Iterable[tuple[str, str, str, int, str]]:
+def _scan_rows(root_path: Path, updated_at: str) -> Tuple[List[tuple[str, str, str, int, str]], List[tuple[str, str, str, str]]]:
+    folder_rows = []
+    file_rows = []
     root_parts = len(root_path.parts)
-    for current, dirnames, _filenames in os.walk(root_path, topdown=True, onerror=lambda _error: None):
+    for current, dirnames, filenames in os.walk(root_path, topdown=True, onerror=lambda _error: None):
         dirnames[:] = sorted(name for name in dirnames if not name.startswith("."))
+        filenames = sorted(name for name in filenames if not name.startswith("."))
         current_path = Path(current)
-        if current_path == root_path:
-            continue
         try:
             resolved = current_path.resolve()
         except OSError:
             continue
-        depth = max(0, len(resolved.parts) - root_parts)
-        yield (resolved.name, str(resolved), str(resolved.parent), depth, updated_at)
+        if resolved != root_path:
+            depth = max(0, len(resolved.parts) - root_parts)
+            folder_rows.append((resolved.name, str(resolved), str(resolved.parent), depth, updated_at))
+        for filename in filenames:
+            try:
+                file_path = (resolved / filename).resolve()
+            except OSError:
+                continue
+            file_rows.append((str(resolved), str(file_path), filename, updated_at))
+    return folder_rows, file_rows
 
 
 def _root_from_row(row) -> RootRecord:
