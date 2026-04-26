@@ -1292,6 +1292,16 @@ document.addEventListener("DOMContentLoaded", function () {
         return;
       }
       if (childType === "dir") {
+        if (detailRow) {
+          detailRow.querySelectorAll(".children-link").forEach(function (otherLink) {
+            otherLink.classList.remove("is-active");
+          });
+        }
+        childLink.classList.add("is-active");
+        setSelectedChildState(
+          detailRow ? detailRow.getAttribute("data-folder-path") || "" : "",
+          path
+        );
         await loadFolderPreview(path, previewPanel, rootId);
         return;
       }
