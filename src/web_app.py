@@ -914,14 +914,13 @@ document.addEventListener("DOMContentLoaded", function () {
   };
 
   const renderPreviewMessage = function (panel, message, className) {
-    panel.textContent = "";
     const messageElement = document.createElement("div");
     messageElement.className = className;
     messageElement.textContent = message;
-    panel.appendChild(messageElement);
+    panel.replaceChildren(messageElement);
   };
 
-  const appendPreviewOpenButton = function (panel, href, label) {
+  const createPreviewOpenButton = function (href, label) {
     const button = document.createElement("a");
     button.className = "preview-open-button";
     button.href = href;
@@ -930,7 +929,7 @@ document.addEventListener("DOMContentLoaded", function () {
     button.setAttribute("aria-label", label);
     button.setAttribute("title", label);
     button.textContent = "";
-    panel.appendChild(button);
+    return button;
   };
 
   const isPdfPath = function (path) {
@@ -969,41 +968,37 @@ document.addEventListener("DOMContentLoaded", function () {
   };
 
   const renderPdfPreview = function (panel, rootId, path) {
-    panel.textContent = "";
-
     const fileUrl = buildFileUrl(rootId, path);
     const pdfViewUrl = fileUrl + "#zoom=page-fit";
     const frame = document.createElement("iframe");
     frame.className = "pdf-preview-frame";
     frame.src = pdfViewUrl;
     frame.title = path.split(/[\\\\/]/).pop() || path;
-    panel.appendChild(frame);
-
-    appendPreviewOpenButton(panel, pdfViewUrl, "Open PDF in new tab");
+    const button = createPreviewOpenButton(pdfViewUrl, "Open PDF in new tab");
+    panel.replaceChildren(frame, button);
   };
 
   const renderImagePreview = function (panel, rootId, path) {
-    panel.textContent = "";
-
     const fileUrl = buildFileUrl(rootId, path);
-    const image = document.createElement("img");
+    const image = new Image();
     image.className = "image-preview";
-    image.src = fileUrl;
     image.alt = path.split(/[\\\\/]/).pop() || path;
-    panel.appendChild(image);
-
-    appendPreviewOpenButton(panel, buildImageViewUrl(rootId, path), "Open image in new tab");
+    const button = createPreviewOpenButton(buildImageViewUrl(rootId, path), "Open image in new tab");
+    image.onload = function () {
+      panel.replaceChildren(image, button);
+    };
+    image.onerror = function () {
+      renderPreviewMessage(panel, "Could not load image preview.", "preview-error");
+    };
+    image.src = fileUrl;
   };
 
   const renderOfficePreviewNote = function (panel, rootId, path) {
-    panel.textContent = "";
-
     const note = document.createElement("div");
     note.className = "preview-note";
     note.textContent = "Office files cannot be previewed directly in this browser. Open the file in a new tab or desktop app.";
-    panel.appendChild(note);
-
-    appendPreviewOpenButton(panel, buildFileUrl(rootId, path), "Open file in new tab");
+    const button = createPreviewOpenButton(buildFileUrl(rootId, path), "Open file in new tab");
+    panel.replaceChildren(note, button);
   };
 
   const loadPreview = async function (link, panel, rootId) {
@@ -1031,7 +1026,9 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     const query = new URLSearchParams({ root_id: rootId, path: path });
-    renderPreviewMessage(panel, "Loading...", "preview-loading");
+    if (!panel.hasChildNodes()) {
+      renderPreviewMessage(panel, "Loading...", "preview-loading");
+    }
     try {
       const response = await fetch("/preview?" + query.toString(), { method: "GET", cache: "no-store" });
       const payload = await response.json();
@@ -1052,21 +1049,20 @@ document.addEventListener("DOMContentLoaded", function () {
         return;
       }
 
-      panel.textContent = "";
       if (!payload.content) {
         const note = document.createElement("div");
         note.className = "preview-note";
         note.textContent = payload.error || "No previewable text content is available.";
-        panel.appendChild(note);
-        appendPreviewOpenButton(panel, buildFileUrl(rootId, path), "Open file in new tab");
+        const button = createPreviewOpenButton(buildFileUrl(rootId, path), "Open file in new tab");
+        panel.replaceChildren(note, button);
         return;
       }
 
       const pre = document.createElement("pre");
       pre.className = "preview-content";
       pre.textContent = payload.content;
-      panel.appendChild(pre);
-      appendPreviewOpenButton(panel, buildFileUrl(rootId, path), "Open file in new tab");
+      const button = createPreviewOpenButton(buildFileUrl(rootId, path), "Open file in new tab");
+      panel.replaceChildren(pre, button);
     } catch (_error) {
       renderPreviewMessage(panel, "Could not load preview.", "preview-error");
     }
