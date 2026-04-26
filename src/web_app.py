@@ -146,13 +146,13 @@ html {
 body {
   font-family: "Hiragino Sans", "Yu Gothic UI", sans-serif;
   margin: 0;
-  padding: 1.5rem 1rem 2rem;
+  padding: 1.25rem 1rem 1.75rem;
   min-width: 980px;
   max-width: min(1500px, calc(100vw - 2rem));
   margin-inline: auto;
   background: var(--bg-color);
   color: var(--text-color);
-  font-size: 0.9375rem;
+  font-size: 14px;
 }
 .page-header {
   display: flex;
@@ -180,13 +180,13 @@ h1 {
   align-items: center;
   justify-content: center;
   min-height: 2rem;
-  padding: 0.35rem 0.9rem;
+  padding: 0.3rem 0.8rem;
   border: 1px solid var(--border-button);
   border-radius: 6px;
   background: var(--nav-bg);
   color: var(--link-color);
   text-decoration: none;
-  font-size: 0.85rem;
+  font-size: 14px;
   font-weight: 600;
 }
 .nav-link:hover { background: var(--surface-muted); }
@@ -228,12 +228,12 @@ h1 {
 .search-row, .settings-form {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.85rem;
+  gap: 0.75rem;
   align-items: flex-end;
 }
 .search-row {
   justify-content: flex-start;
-  gap: 0.65rem;
+  gap: 0.55rem;
   align-items: center;
 }
 .settings-form {
@@ -262,7 +262,7 @@ h1 {
 .search-tools {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
   padding-left: 0;
   border-left: 0;
   margin-left: auto;
@@ -302,7 +302,7 @@ h1 {
 }
 label {
   font-weight: 600;
-  font-size: 0.8125rem;
+  font-size: 12px;
   color: var(--text-muted);
 }
 .search-form label[for="root_id"] {
@@ -324,7 +324,7 @@ input[type=text], select {
   padding: 0 0.65rem;
   border: 1px solid var(--border-input);
   border-radius: 5px;
-  font-size: 0.9375rem;
+  font-size: 14px;
   line-height: var(--control-height);
   color: var(--text-color);
   background: var(--surface-soft);
@@ -344,7 +344,7 @@ button, .action-button {
   color: var(--button-text);
   border: none;
   border-radius: 5px;
-  font-size: 0.875rem;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   text-decoration: none;
@@ -355,12 +355,12 @@ button:hover, .action-button:hover { background: var(--accent-hover); }
 .button-danger { background: var(--button-danger); }
 .button-danger:hover { background: var(--button-danger-hover); }
 .meta, .notice, .empty {
-  font-size: 0.875rem;
+  font-size: 12px;
   color: var(--text-muted);
   background: var(--surface-muted);
   border: 1px solid var(--border-soft);
   border-radius: 6px;
-  padding: 0.55rem 0.75rem;
+  padding: 0.5rem 0.7rem;
   margin: 0 0 0.7rem;
 }
 .meta strong { color: var(--text-strong); }
@@ -378,21 +378,21 @@ table {
   border: 0;
   border-radius: 0;
   overflow: visible;
-  font-size: 0.875rem;
+  font-size: 14px;
 }
 thead th {
   background: var(--surface-muted);
   color: var(--text-muted);
-  padding: 0.6rem 0.75rem;
+  padding: 0.5rem 0.7rem;
   text-align: left;
-  font-size: 0.8125rem;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
   border-bottom: 1px solid var(--border-color);
 }
 tbody td {
   border-top: 0;
-  padding: 0.28rem 0;
+  padding: 0.24rem 0;
   vertical-align: top;
 }
 tbody tr:nth-child(even) { background: transparent; }
@@ -576,10 +576,11 @@ tbody tr:hover { background: transparent; }
   gap: 0.35rem;
   color: var(--text-color);
   text-decoration: none;
+  font-size: 14px;
   font-weight: 500;
   width: 100%;
   min-width: 0;
-  padding: 0.38rem 0.55rem;
+  padding: 0.34rem 0.5rem;
   border-left: 3px solid transparent;
   border-radius: 10px;
   transition: background-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease, border-color 0.15s ease;
@@ -689,7 +690,7 @@ tbody tr:hover { background: transparent; }
 .preview-error,
 .preview-note {
   color: var(--text-muted);
-  font-size: 0.82rem;
+  font-size: 12px;
   padding: 0.15rem 0;
   word-break: break-word;
 }
@@ -706,7 +707,7 @@ tbody tr:hover { background: transparent; }
   white-space: pre-wrap;
   word-break: break-word;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.8rem;
+  font-size: 14px;
   line-height: 1.45;
   color: var(--text-color);
 }
@@ -774,6 +775,7 @@ tbody tr:hover { background: transparent; }
   border-right: 1.7px solid currentColor;
 }
 .folder-name, .root-name, .parent-folder-name {
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-color);
   cursor: pointer;
@@ -789,8 +791,8 @@ tbody tr:hover { background: transparent; }
   display: grid;
   grid-template-columns: minmax(0, 1fr) 8rem 2rem;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.5rem 0.9rem;
+  gap: 0.65rem;
+  padding: 0.42rem 0.8rem;
   border: 1px solid var(--border-color);
   border-radius: 12px;
   background: var(--surface-color);
@@ -841,7 +843,7 @@ html[data-theme="dark"] .result-table tr[data-row-path]:has(.folder-name[data-ex
   display: inline-flex;
   margin-left: 0.75rem;
   color: var(--button-text);
-  font-size: 0.8125rem;
+  font-size: 12px;
   font-weight: 600;
 }
 .file-match-badge {
@@ -855,7 +857,7 @@ html[data-theme="dark"] .result-table tr[data-row-path]:has(.folder-name[data-ex
   border-radius: 999px;
   background: #F1F5F9;
   color: #475569;
-  font-size: 0.74rem;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -895,11 +897,11 @@ html[data-theme="dark"] .result-table tr[data-row-path]:has(.folder-name[data-ex
   word-break: break-all;
   color: var(--text-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.8125rem;
+  font-size: 12px;
 }
 .muted {
   color: var(--text-subtle);
-  font-size: 0.8125rem;
+  font-size: 12px;
 }
 .badge {
   display: inline-flex;
@@ -910,7 +912,7 @@ html[data-theme="dark"] .result-table tr[data-row-path]:has(.folder-name[data-ex
   border: 1px solid var(--border-button);
   color: var(--link-color);
   background: var(--surface-muted);
-  font-size: 0.78rem;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -934,7 +936,7 @@ html[data-theme="dark"] .result-table tr[data-row-path]:has(.folder-name[data-ex
 }
 .table-cell-stack {
   display: grid;
-  gap: 0.35rem;
+  gap: 0.28rem;
   min-width: 0;
 }
 mark {
