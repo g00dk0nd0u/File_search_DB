@@ -325,6 +325,20 @@ tbody tr:hover { background: var(--surface-hover); }
 .folder-name[data-expanded="true"] {
   background-color: var(--surface-hover);
 }
+.folder-name::before {
+  content: "";
+  display: inline-block;
+  flex-shrink: 0;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+.folder-name[data-expanded="true"]::before {
+  transform: rotate(45deg);
+}
 .breadcrumb-parent {
   color: var(--text-muted);
   font-weight: 600;
@@ -494,16 +508,6 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
 }
 .children-link.is-active .children-name {
   color: var(--text-strong);
-}
-.file-ext-badge {
-  margin-left: 0.35rem;
-  padding: 0.05rem 0.28rem;
-  border: 1px solid var(--border-soft);
-  border-radius: 4px;
-  color: var(--text-subtle);
-  font-size: 0.65rem;
-  font-weight: 700;
-  line-height: 1.2;
 }
 .children-empty,
 .children-loading,
@@ -1118,14 +1122,6 @@ document.addEventListener("DOMContentLoaded", function () {
       name.className = "children-name";
       name.textContent = item.type === "dir" ? "/" + (item.name || item.path || "(unknown)") : (item.name || item.path || "(unknown)");
       link.appendChild(name);
-
-      const extMatch = String(item.name || item.path || "").match(/\\.([^.]+)$/);
-      if (item.type === "file" && extMatch) {
-        const badge = document.createElement("span");
-        badge.className = "file-ext-badge";
-        badge.textContent = extMatch[1].toUpperCase();
-        link.appendChild(badge);
-      }
 
       row.appendChild(link);
 
@@ -1921,7 +1917,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             if parent_name:
                 folder_label = (
                     f"<span class='breadcrumb-parent'>{parent_label}</span>"
-                    "<span class='breadcrumb-separator'>›</span>"
+                    "<span class='breadcrumb-separator'>/</span>"
                     f"<span class='breadcrumb-current'>{current_label}</span>"
                 )
             else:
