@@ -760,6 +760,16 @@ html[data-theme="dark"] .result-table tr[data-row-path]:has(.folder-name[data-ex
   font-weight: 600;
   white-space: nowrap;
 }
+html[data-theme="dark"] .file-match-badge {
+  background: #3A3A3A;
+  color: #D0D0D0;
+  border: 1px solid #4A4A4A;
+}
+html[data-theme="dark"] .result-table tr[data-row-path]:has(.folder-name[data-expanded="true"]) .file-match-badge {
+  background: #3F4650;
+  color: #E0E0E0;
+  border: 1px solid #4C5560;
+}
 .file-match-badge.is-empty {
   visibility: hidden;
 }
