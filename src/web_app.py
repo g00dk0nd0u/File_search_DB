@@ -390,7 +390,13 @@ tbody td {
 }
 tbody tr:nth-child(even) { background: transparent; }
 tbody tr:hover { background: transparent; }
+.result-detail-row {
+  display: block;
+  width: 100%;
+}
 .result-detail-row td {
+  display: block;
+  width: 100%;
   background: transparent;
   padding: 0 0 0.45rem;
 }
@@ -437,7 +443,10 @@ tbody tr:hover { background: transparent; }
   color: var(--text-color);
 }
 .detail-shell {
-  display: grid;
+  display: block;
+  width: 100%;
+  clear: both;
+  overflow: visible;
   gap: 0.55rem;
   margin: -0.2rem 0 0;
   padding: 0.35rem 0.45rem 0.6rem;
@@ -494,6 +503,7 @@ tbody tr:hover { background: transparent; }
 }
 .detail-grid {
   display: grid;
+  width: 100%;
   grid-template-columns: clamp(20rem, 38%, 34rem) minmax(0, 1fr);
   gap: 0.75rem;
   align-items: start;
@@ -506,6 +516,7 @@ tbody tr:hover { background: transparent; }
   position: relative;
   width: 100%;
   min-width: 0;
+  overflow: visible;
   border: 0;
   border-radius: 0;
   background: var(--surface-color);
@@ -701,6 +712,7 @@ tbody tr:hover { background: transparent; }
 .pdf-preview-frame {
   display: block;
   width: min(100%, 31rem);
+  max-width: 100%;
   height: 38rem;
   min-height: 38rem;
   margin: 0 auto;
@@ -710,8 +722,10 @@ tbody tr:hover { background: transparent; }
 }
 .image-preview {
   display: block;
-  max-width: min(100%, 34rem);
-  max-height: 34rem;
+  width: min(100%, 34rem);
+  max-width: 100%;
+  height: auto;
+  max-height: min(34rem, 70vh);
   margin: 0 auto;
   border: 2px solid var(--preview-image-border);
   border-radius: 8px;
