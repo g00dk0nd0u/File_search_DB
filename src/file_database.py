@@ -234,48 +234,15 @@ def search_folders(conn: sqlite3.Connection, root_id: int, query: str, limit: in
     if root is None:
         return []
 
-    folder_rows = conn.execute(
-        """
-        SELECT
-            f.root_id,
-            r.display_name,
-            f.name,
-            f.path,
-            f.parent_path,
-            f.depth,
-            f.updated_at,
-            'name' AS match_kind
-        FROM folders f
-        JOIN roots r ON r.id = f.root_id
-        WHERE f.root_id = ?
-        ORDER BY
-            f.depth,
-            f.name COLLATE NOCASE,
-            f.path COLLATE NOCASE
-        """,
-        (root_id,),
-    ).fetchall()
-
-    folder_records: Dict[str, FolderRecord] = {}
-    for row in folder_rows:
-        record = _folder_from_row(row)
-        folder_records[record.path] = record
-
-    direct_file_counts: Dict[str, int] = {}
+    positive_terms = _extract_positive_terms(parsed_query)
+    candidate_paths: set[str] = set()
     file_hits: Dict[str, Dict[str, object]] = {}
-    if parsed_query.positive_groups:
-        file_rows = conn.execute(
-            """
-            SELECT folder_path, file_path, file_name
-            FROM files
-            WHERE root_id = ?
-            ORDER BY file_name COLLATE NOCASE, file_path COLLATE NOCASE
-            """,
-            (root_id,),
-        ).fetchall()
+    if positive_terms:
+        candidate_paths.update(_find_candidate_folder_paths_by_name(conn, root_id, positive_terms))
+        file_rows = _find_candidate_file_rows(conn, root_id, positive_terms)
         for folder_path, file_path, file_name in file_rows:
             folder_key = str(folder_path)
-            direct_file_counts[folder_key] = direct_file_counts.get(folder_key, 0) + 1
+            candidate_paths.add(folder_key)
             if not _matches_parsed_query(str(file_name), parsed_query):
                 continue
             bucket = file_hits.setdefault(
@@ -288,13 +255,27 @@ def search_folders(conn: sqlite3.Connection, root_id: int, query: str, limit: in
             if str(file_name) not in names:
                 names.append(str(file_name))
             paths.append(str(file_path))
+    else:
+        candidate_paths.update(_list_all_folder_paths(conn, root_id))
+
+    root_folder_name = Path(root.root_path).name or root.display_name
+    root_name_candidate = not positive_terms or _matches_any_term(root_folder_name, positive_terms)
+    count_target_paths = set(candidate_paths)
+    if positive_terms and root_name_candidate:
+        count_target_paths.add(root.root_path)
+    if not positive_terms:
+        root_name_candidate = True
+
+    folder_records = _load_folder_records(conn, root_id, candidate_paths)
+    direct_file_counts: Dict[str, int] = {}
+    if positive_terms and count_target_paths:
+        direct_file_counts = _count_files_by_folder_paths(conn, root_id, count_target_paths)
 
     matched_rows: List[FolderRecord] = []
     seen_paths = set()
 
-    root_folder_name = Path(root.root_path).name or root.display_name
     root_file_info = file_hits.get(root.root_path)
-    if _matches_parsed_query(root_folder_name, parsed_query):
+    if root_name_candidate and _matches_parsed_query(root_folder_name, parsed_query):
         matched_rows.append(
             FolderRecord(
                 root_id=root.id,
@@ -369,6 +350,150 @@ def search_folders(conn: sqlite3.Connection, root_id: int, query: str, limit: in
         )
     matched_rows.sort(key=lambda record: (record.depth, record.name.casefold(), record.path.casefold()))
     return matched_rows[:limit]
+
+
+def _extract_positive_terms(query: ParsedFolderQuery) -> List[str]:
+    terms: List[str] = []
+    seen = set()
+    for group in query.positive_groups:
+        for term in group:
+            folded = term.casefold()
+            if folded in seen:
+                continue
+            seen.add(folded)
+            terms.append(term)
+    return terms
+
+
+def _find_candidate_folder_paths_by_name(conn: sqlite3.Connection, root_id: int, terms: List[str]) -> set[str]:
+    paths: set[str] = set()
+    for term_group in _chunked(terms, 200):
+        where_sql, params = _build_like_filter("name", term_group)
+        rows = conn.execute(
+            f"""
+            SELECT path
+            FROM folders
+            WHERE root_id = ?
+              AND ({where_sql})
+            """,
+            (root_id, *params),
+        ).fetchall()
+        paths.update(str(row[0]) for row in rows)
+    return paths
+
+
+def _find_candidate_file_rows(conn: sqlite3.Connection, root_id: int, terms: List[str]) -> List[tuple[str, str, str]]:
+    rows: List[tuple[str, str, str]] = []
+    seen_file_paths: set[str] = set()
+    for term_group in _chunked(terms, 200):
+        where_sql, params = _build_like_filter("file_name", term_group)
+        chunk_rows = conn.execute(
+            f"""
+            SELECT folder_path, file_path, file_name
+            FROM files
+            WHERE root_id = ?
+              AND ({where_sql})
+            ORDER BY file_name COLLATE NOCASE, file_path COLLATE NOCASE
+            """,
+            (root_id, *params),
+        ).fetchall()
+        for folder_path, file_path, file_name in chunk_rows:
+            file_key = str(file_path)
+            if file_key in seen_file_paths:
+                continue
+            seen_file_paths.add(file_key)
+            rows.append((str(folder_path), file_key, str(file_name)))
+    rows.sort(key=lambda row: (row[2].casefold(), row[1].casefold()))
+    return rows
+
+
+def _list_all_folder_paths(conn: sqlite3.Connection, root_id: int) -> set[str]:
+    rows = conn.execute(
+        """
+        SELECT path
+        FROM folders
+        WHERE root_id = ?
+        """,
+        (root_id,),
+    ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
+def _load_folder_records(conn: sqlite3.Connection, root_id: int, folder_paths: Iterable[str]) -> Dict[str, FolderRecord]:
+    records: Dict[str, FolderRecord] = {}
+    paths = list(folder_paths)
+    if not paths:
+        return records
+    for path_group in _chunked(paths, 400):
+        placeholders = ", ".join("?" for _ in path_group)
+        rows = conn.execute(
+            f"""
+            SELECT
+                f.root_id,
+                r.display_name,
+                f.name,
+                f.path,
+                f.parent_path,
+                f.depth,
+                f.updated_at,
+                'name' AS match_kind
+            FROM folders f
+            JOIN roots r ON r.id = f.root_id
+            WHERE f.root_id = ?
+              AND f.path IN ({placeholders})
+            ORDER BY
+                f.depth,
+                f.name COLLATE NOCASE,
+                f.path COLLATE NOCASE
+            """,
+            (root_id, *path_group),
+        ).fetchall()
+        for row in rows:
+            record = _folder_from_row(row)
+            records[record.path] = record
+    return records
+
+
+def _count_files_by_folder_paths(conn: sqlite3.Connection, root_id: int, folder_paths: Iterable[str]) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    paths = list(folder_paths)
+    if not paths:
+        return counts
+    for path_group in _chunked(paths, 400):
+        placeholders = ", ".join("?" for _ in path_group)
+        rows = conn.execute(
+            f"""
+            SELECT folder_path, COUNT(*)
+            FROM files
+            WHERE root_id = ?
+              AND folder_path IN ({placeholders})
+            GROUP BY folder_path
+            """,
+            (root_id, *path_group),
+        ).fetchall()
+        for folder_path, count in rows:
+            counts[str(folder_path)] = int(count)
+    return counts
+
+
+def _build_like_filter(column: str, terms: List[str]) -> Tuple[str, List[str]]:
+    return " OR ".join(f"{column} LIKE ?" for _ in terms), [f"%{term}%" for term in terms]
+
+
+def _chunked(items: Iterable[str], size: int) -> Iterable[List[str]]:
+    chunk: List[str] = []
+    for item in items:
+        chunk.append(item)
+        if len(chunk) >= size:
+            yield chunk
+            chunk = []
+    if chunk:
+        yield chunk
+
+
+def _matches_any_term(text: str, terms: List[str]) -> bool:
+    name = text.casefold()
+    return any(term.casefold() in name for term in terms)
 
 
 def parse_folder_query(query: str) -> ParsedFolderQuery:

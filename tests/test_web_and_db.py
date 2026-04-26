@@ -148,6 +148,126 @@ class FolderDatabaseTests(unittest.TestCase):
         self.assertFalse(rows_by_name["Other"].folder_name_matched)
         self.assertEqual(rows_by_name["Other"].file_match_count, 1)
 
+    def test_search_folders_returns_parent_folder_for_file_name_hit_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root_dir = pathlib.Path(tmp) / "Root"
+            parent_dir = root_dir / "Reference"
+            other_dir = root_dir / "Other"
+            parent_dir.mkdir(parents=True)
+            other_dir.mkdir(parents=True)
+            (parent_dir / "alpha_manual.pdf").write_text("x", encoding="utf-8")
+            (other_dir / "notes.txt").write_text("x", encoding="utf-8")
+
+            conn = sqlite3.connect(":memory:")
+            try:
+                root = add_root(conn, "Root", root_dir)
+                scan_root(conn, root.id)
+                conn.commit()
+                rows = search_folders(conn, root.id, "manual")
+            finally:
+                conn.close()
+
+        self.assertEqual([row.name for row in rows], ["Reference"])
+        self.assertFalse(rows[0].folder_name_matched)
+        self.assertEqual(rows[0].matched_file_names, ("alpha_manual.pdf",))
+        self.assertEqual(rows[0].matched_file_paths, (str((parent_dir / "alpha_manual.pdf").resolve()),))
+
+    def test_search_folders_keeps_folder_and_file_name_hits_together(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root_dir = pathlib.Path(tmp) / "Root"
+            both_dir = root_dir / "alpha_assets"
+            file_only_dir = root_dir / "Misc"
+            both_dir.mkdir(parents=True)
+            file_only_dir.mkdir(parents=True)
+            (both_dir / "alpha_brief.txt").write_text("x", encoding="utf-8")
+            (both_dir / "other.txt").write_text("x", encoding="utf-8")
+            (file_only_dir / "alpha_sheet.txt").write_text("x", encoding="utf-8")
+
+            conn = sqlite3.connect(":memory:")
+            try:
+                root = add_root(conn, "Root", root_dir)
+                scan_root(conn, root.id)
+                conn.commit()
+                rows = search_folders(conn, root.id, "alpha")
+            finally:
+                conn.close()
+
+        rows_by_name = {row.name: row for row in rows}
+        self.assertEqual(set(rows_by_name), {"alpha_assets", "Misc"})
+        self.assertTrue(rows_by_name["alpha_assets"].folder_name_matched)
+        self.assertEqual(rows_by_name["alpha_assets"].file_match_count, 2)
+        self.assertEqual(rows_by_name["alpha_assets"].matched_file_names, ("alpha_brief.txt",))
+        self.assertFalse(rows_by_name["Misc"].folder_name_matched)
+        self.assertEqual(rows_by_name["Misc"].matched_file_names, ("alpha_sheet.txt",))
+
+    def test_search_folders_supports_and_search_for_file_name_hits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root_dir = pathlib.Path(tmp) / "Root"
+            matched_dir = root_dir / "Specs"
+            split_dir = root_dir / "Split"
+            matched_dir.mkdir(parents=True)
+            split_dir.mkdir(parents=True)
+            (matched_dir / "alpha beta guide.txt").write_text("x", encoding="utf-8")
+            (split_dir / "alpha_only.txt").write_text("x", encoding="utf-8")
+            (split_dir / "beta_only.txt").write_text("x", encoding="utf-8")
+
+            conn = sqlite3.connect(":memory:")
+            try:
+                root = add_root(conn, "Root", root_dir)
+                scan_root(conn, root.id)
+                conn.commit()
+                rows = search_folders(conn, root.id, "alpha beta")
+            finally:
+                conn.close()
+
+        self.assertEqual([row.name for row in rows], ["Specs"])
+        self.assertEqual(rows[0].matched_file_names, ("alpha beta guide.txt",))
+
+    def test_search_folders_supports_minus_filter_for_file_name_hits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root_dir = pathlib.Path(tmp) / "Root"
+            keep_dir = root_dir / "Keep"
+            drop_dir = root_dir / "Drop"
+            keep_dir.mkdir(parents=True)
+            drop_dir.mkdir(parents=True)
+            (keep_dir / "cat_notes.txt").write_text("x", encoding="utf-8")
+            (drop_dir / "cat_draft.txt").write_text("x", encoding="utf-8")
+
+            conn = sqlite3.connect(":memory:")
+            try:
+                root = add_root(conn, "Root", root_dir)
+                scan_root(conn, root.id)
+                conn.commit()
+                rows = search_folders(conn, root.id, "cat -draft")
+            finally:
+                conn.close()
+
+        self.assertEqual([row.name for row in rows], ["Keep"])
+        self.assertEqual(rows[0].matched_file_names, ("cat_notes.txt",))
+
+    def test_search_folders_supports_phrase_search_for_file_name_hits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root_dir = pathlib.Path(tmp) / "Root"
+            matched_dir = root_dir / "Phrase"
+            split_dir = root_dir / "Split"
+            matched_dir.mkdir(parents=True)
+            split_dir.mkdir(parents=True)
+            (matched_dir / "gamma delta plan.txt").write_text("x", encoding="utf-8")
+            (split_dir / "gamma.txt").write_text("x", encoding="utf-8")
+            (split_dir / "delta.txt").write_text("x", encoding="utf-8")
+
+            conn = sqlite3.connect(":memory:")
+            try:
+                root = add_root(conn, "Root", root_dir)
+                scan_root(conn, root.id)
+                conn.commit()
+                rows = search_folders(conn, root.id, '"gamma delta"')
+            finally:
+                conn.close()
+
+        self.assertEqual([row.name for row in rows], ["Phrase"])
+        self.assertEqual(rows[0].matched_file_names, ("gamma delta plan.txt",))
+
     def test_parse_folder_query_supports_google_like_operators(self):
         parsed = parse_folder_query('alpha beta OR "gamma delta" -draft')
         self.assertEqual(parsed.positive_groups, [["alpha", "beta"], ["gamma delta"]])
@@ -248,11 +368,11 @@ class WebUiTests(unittest.TestCase):
             roots_table="<div></div>",
         )
 
-        self.assertIn("ファイル/フォルダ置き場検索", search_html)
-        self.assertIn('placeholder="キーワードを入力してください。"', search_html)
-        self.assertNotIn('<label for="q">キーワード</label>', search_html)
-        self.assertIn("検索対象フォルダ管理", settings_html)
-        self.assertIn("Open", settings_html)
+        self.assertIn("Folder Search", search_html)
+        self.assertIn('placeholder="Enter keyword"', search_html)
+        self.assertIn('<label for="root_id">Search Target</label>', search_html)
+        self.assertIn("Folder Manager", settings_html)
+        self.assertIn("Choose Folder", settings_html)
         self.assertNotIn("root_path", settings_html)
 
     def test_client_script_restores_query_focus_after_live_search_reload(self):
@@ -318,7 +438,7 @@ class WebUiTests(unittest.TestCase):
 
     def test_render_results_empty(self):
         html_doc = FileSearchHandler.render_results([], "missing")
-        self.assertIn("該当するフォルダが見つかりませんでした", html_doc)
+        self.assertIn("No matching folders were found.", html_doc)
 
     def test_render_roots_table_contains_actions(self):
         class Root:
@@ -331,14 +451,14 @@ class WebUiTests(unittest.TestCase):
 
         html_doc = FileSearchHandler.render_roots_table([Root()])
         self.assertIn("Server", html_doc)
-        self.assertIn("再スキャン", html_doc)
-        self.assertIn("削除", html_doc)
+        self.assertIn("Reload", html_doc)
+        self.assertIn("Delete", html_doc)
 
     def test_handle_search_page_renders_minimum_html(self):
         captured = {}
         handler = object.__new__(FileSearchHandler)
         handler._send_html = lambda body: captured.setdefault("html", body.decode("utf-8"))
-        handler._load_roots = lambda requested_root_id: ([], None)
+        handler._load_roots = lambda requested_root_id, allow_unselected_default=False: ([], None)
 
         FileSearchHandler._handle_search_page(handler, urlparse("/"))
 
@@ -355,13 +475,13 @@ class WebUiTests(unittest.TestCase):
         captured = {}
         handler = object.__new__(FileSearchHandler)
         handler._send_html = lambda body: captured.setdefault("html", body.decode("utf-8"))
-        handler._load_roots = lambda requested_root_id: ([Root()], 1)
+        handler._load_roots = lambda requested_root_id, allow_unselected_default=False: ([Root()], 1)
 
         FileSearchHandler._handle_search_page(handler, urlparse("/?root_id=1"))
 
-        self.assertIn('placeholder="キーワードを入力してください。"', captured["html"])
-        self.assertNotIn("<strong>キーワードを入力してください</strong>", captured["html"])
-        self.assertNotIn("該当するフォルダが見つかりませんでした", captured["html"])
+        self.assertIn('placeholder="Enter keyword"', captured["html"])
+        self.assertNotIn("<strong>Enter a keyword</strong>", captured["html"])
+        self.assertNotIn("No matching folders were found.", captured["html"])
 
     def test_build_server_url(self):
         self.assertEqual(build_server_url("127.0.0.1", 8765), "http://127.0.0.1:8765")
@@ -663,7 +783,7 @@ class WebUiTests(unittest.TestCase):
 
         self.assertEqual(body["content"], "")
         self.assertEqual(body["encoding"], "binary")
-        self.assertIn("バイナリファイル", body["error"])
+        self.assertIn("Binary files", body["error"])
 
     def test_read_preview_reports_pdf_mime_for_pdf_files(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -752,8 +872,8 @@ class WebUiTests(unittest.TestCase):
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["Content-Type"], "application/pdf")
         self.assertIn("inline", captured["Content-Disposition"])
-        self.assertIn('filename="preview.pdf"', captured["Content-Disposition"])
         self.assertIn("filename*=UTF-8''", captured["Content-Disposition"])
+        self.assertIn("%E7%94%B3%E8%AB%8B", captured["Content-Disposition"])
         captured["Content-Disposition"].encode("latin-1")
         self.assertEqual(handler.wfile.getvalue(), pdf_bytes)
 
@@ -781,29 +901,36 @@ class WebUiTests(unittest.TestCase):
             def call_file(query_params):
                 handler = object.__new__(FileSearchHandler)
                 handler.db_path = str(db_path)
+                handler.requestline = ""
+                handler.request_version = "HTTP/1.1"
+                handler.command = "GET"
                 captured = {}
+                handler.send_response = lambda status: captured.setdefault("status", status)
+                handler.send_header = lambda key, value: captured.setdefault(key, value)
+                handler.end_headers = lambda: captured.setdefault("ended", True)
                 handler.send_error = lambda status, message=None: captured.setdefault("error", (status, message))
                 handler.wfile = io.BytesIO()
                 query = urlencode(query_params)
                 FileSearchHandler._handle_file(handler, urlparse(f"/file?{query}"))
-                return captured["error"]
+                return captured
 
-            missing_path_error = call_file({"root_id": root.id})
-            directory_error = call_file({"root_id": root.id, "path": str(root_dir)})
-            non_pdf_error = call_file({"root_id": root.id, "path": str(non_pdf)})
-            outside_error = call_file({"root_id": root.id, "path": str(outside_pdf)})
-            not_found_error = call_file({"root_id": root.id, "path": str(root_dir / "missing.pdf")})
+            missing_path_result = call_file({"root_id": root.id})
+            directory_result = call_file({"root_id": root.id, "path": str(root_dir)})
+            non_pdf_result = call_file({"root_id": root.id, "path": str(non_pdf)})
+            outside_result = call_file({"root_id": root.id, "path": str(outside_pdf)})
+            not_found_result = call_file({"root_id": root.id, "path": str(root_dir / "missing.pdf")})
 
-        self.assertEqual(missing_path_error[0], 400)
-        self.assertIn("path is required", missing_path_error[1])
-        self.assertEqual(directory_error[0], 400)
-        self.assertIn("not a file", directory_error[1])
-        self.assertEqual(non_pdf_error[0], 400)
-        self.assertIn("Only PDF", non_pdf_error[1])
-        self.assertEqual(outside_error[0], 403)
-        self.assertIn("outside root", outside_error[1])
-        self.assertEqual(not_found_error[0], 404)
-        self.assertIn("Path not found", not_found_error[1])
+        self.assertEqual(missing_path_result["error"][0], 400)
+        self.assertIn("path is required", missing_path_result["error"][1])
+        self.assertEqual(directory_result["error"][0], 400)
+        self.assertIn("not a file", directory_result["error"][1])
+        self.assertEqual(non_pdf_result["status"], 200)
+        self.assertEqual(non_pdf_result["Content-Type"], "text/plain")
+        self.assertEqual(non_pdf_result["Content-Disposition"], 'inline; filename="note.txt"; filename*=UTF-8\'\'note.txt')
+        self.assertEqual(outside_result["error"][0], 403)
+        self.assertIn("outside root", outside_result["error"][1])
+        self.assertEqual(not_found_result["error"][0], 404)
+        self.assertIn("Path not found", not_found_result["error"][1])
 
     def test_open_path_in_file_manager_uses_startfile_on_windows(self):
         with mock.patch("web_app.sys.platform", "win32"):
