@@ -234,6 +234,18 @@ label {
   font-size: 0.8125rem;
   color: var(--text-muted);
 }
+.search-form label[for="root_id"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 input[type=text], select {
   width: 18rem;
   max-width: 78vw;
@@ -1489,7 +1501,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
     def _handle_search_page(self, parsed):
         root_id, query_raw = self._parse_search_inputs(parsed.query)
         query_search = query_raw.strip()
-        roots, selected_root_id = self._load_roots(root_id)
+        roots, selected_root_id = self._load_roots(root_id, allow_unselected_default=True)
         rows = []
         message = ""
         result_message = ""
@@ -2049,13 +2061,15 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         except ValueError:
             return None, query_raw
 
-    def _load_roots(self, requested_root_id: Optional[int]):
+    def _load_roots(self, requested_root_id: Optional[int], allow_unselected_default: bool = False):
         conn, _warning = self._connect_existing_db()
         if conn is None:
             return [], None
         with closing(conn):
             roots = list_roots(conn)
         if not roots:
+            return roots, None
+        if requested_root_id is None and allow_unselected_default:
             return roots, None
         root_ids = {root.id for root in roots}
         if requested_root_id in root_ids:
@@ -2066,7 +2080,8 @@ class FileSearchHandler(BaseHTTPRequestHandler):
     def _render_root_options(roots, selected_root_id: Optional[int]) -> str:
         if not roots:
             return "<option value=''>No entries</option>"
-        options = []
+        placeholder_selected = " selected" if selected_root_id is None else ""
+        options = [f"<option value='' disabled{placeholder_selected}>Search Target</option>"]
         for root in roots:
             selected = " selected" if root.id == selected_root_id else ""
             label = f"{root.display_name} ({root.folder_count} folders)"
