@@ -32,6 +32,28 @@ else:
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "file_index.db"
 PREVIEW_BYTES = 16 * 1024
+EXTRA_MIME_TYPES = {
+    ".avif": "image/avif",
+    ".bmp": "image/bmp",
+    ".gif": "image/gif",
+    ".heic": "image/heic",
+    ".heif": "image/heif",
+    ".jfif": "image/jpeg",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".svg": "image/svg+xml",
+    ".tif": "image/tiff",
+    ".tiff": "image/tiff",
+    ".webp": "image/webp",
+}
+
+
+def guess_mime_type(path: Path) -> str:
+    mime = mimetypes.guess_type(str(path))[0]
+    if mime:
+        return mime
+    return EXTRA_MIME_TYPES.get(path.suffix.casefold(), "application/octet-stream")
 
 
 BASE_CSS = """
@@ -856,6 +878,11 @@ document.addEventListener("DOMContentLoaded", function () {
     return "/file?" + query.toString();
   };
 
+  const buildImageViewUrl = function (rootId, path) {
+    const query = new URLSearchParams({ root_id: rootId, path: path });
+    return "/view_image?" + query.toString();
+  };
+
   const renderPdfPreview = function (panel, rootId, path) {
     panel.textContent = "";
     const meta = document.createElement("div");
@@ -895,7 +922,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const fallback = document.createElement("a");
     fallback.className = "pdf-fallback-link";
-    fallback.href = fileUrl;
+    fallback.href = buildImageViewUrl(rootId, path);
     fallback.target = "_blank";
     fallback.rel = "noopener";
     fallback.textContent = "Open image in new tab";
@@ -1103,8 +1130,8 @@ document.addEventListener("DOMContentLoaded", function () {
       return;
     }
 
-    const openLink = target.closest("[data-folder-path]");
-    if (openLink) {
+    const openLink = target.closest("a[data-folder-path], button[data-folder-path]");
+    if (openLink instanceof HTMLAnchorElement || openLink instanceof HTMLButtonElement) {
       event.preventDefault();
       const path = openLink.getAttribute("data-folder-path");
       if (path) {
@@ -1258,6 +1285,9 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/file":
             self._handle_file(parsed)
+            return
+        if parsed.path == "/view_image":
+            self._handle_view_image(parsed)
             return
         self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
 
@@ -1525,41 +1555,41 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         except OSError:
             self._send_json(HTTPStatus.BAD_REQUEST, self._preview_payload(path_value, error="Path cannot be resolved"))
 
-    def _handle_file(self, parsed):
+    def _resolve_requested_file(self, parsed) -> Optional[Path]:
         params = parse_qs(parsed.query)
         root_value = params.get("root_id", [""])[0].strip()
         path_value = params.get("path", [""])[0].strip()
         if not root_value:
             self.send_error(HTTPStatus.BAD_REQUEST, "root_id is required")
-            return
+            return None
         if not path_value:
             self.send_error(HTTPStatus.BAD_REQUEST, "path is required")
-            return
+            return None
         try:
             root_id = int(root_value)
         except ValueError:
             self.send_error(HTTPStatus.BAD_REQUEST, "root_id is invalid")
-            return
+            return None
 
         path = Path(path_value)
         if not path.exists():
             self.send_error(HTTPStatus.NOT_FOUND, "Path not found")
-            return
+            return None
         if not path.is_file():
             self.send_error(HTTPStatus.BAD_REQUEST, "Path is not a file")
-            return
+            return None
 
         conn, warning = self._connect_existing_db()
         if conn is None:
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, warning or "DB unavailable")
-            return
+            return None
 
         try:
             with closing(conn):
                 root = get_root(conn, root_id)
             if root is None:
                 self.send_error(HTTPStatus.NOT_FOUND, "Root not found")
-                return
+                return None
 
             target_path = path.resolve()
             root_path = Path(root.root_path).resolve()
@@ -1567,14 +1597,24 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                 target_path.relative_to(root_path)
             except ValueError:
                 self.send_error(HTTPStatus.FORBIDDEN, "Path is outside root")
-                return
+                return None
+            return target_path
+        except OSError as exc:
+            self.send_error(HTTPStatus.BAD_REQUEST, f"File cannot be read: {exc}")
+            return None
 
+    def _handle_file(self, parsed):
+        target_path = self._resolve_requested_file(parsed)
+        if target_path is None:
+            return
+
+        try:
             data = target_path.read_bytes()
         except OSError as exc:
             self.send_error(HTTPStatus.BAD_REQUEST, f"File cannot be read: {exc}")
             return
 
-        mime = mimetypes.guess_type(str(target_path))[0] or "application/octet-stream"
+        mime = guess_mime_type(target_path)
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", mime)
         filename = quote(target_path.name, safe="")
@@ -1583,6 +1623,50 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def _handle_view_image(self, parsed):
+        target_path = self._resolve_requested_file(parsed)
+        if target_path is None:
+            return
+
+        params = parse_qs(parsed.query)
+        root_value = params.get("root_id", [""])[0].strip()
+        path_value = params.get("path", [""])[0].strip()
+        file_url = "/file?" + urlencode({"root_id": root_value, "path": path_value})
+        title = html.escape(target_path.name)
+        image_src = html.escape(file_url, quote=True)
+        body = f"""<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>{title}</title>
+  <style>
+    body {{
+      margin: 0;
+      background: #111;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      min-height: 100vh;
+    }}
+    img {{
+      display: block;
+      max-width: 100vw;
+      height: auto;
+    }}
+  </style>
+</head>
+<body>
+  <img src="{image_src}" alt="{title}">
+</body>
+</html>
+""".encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     @staticmethod
     def _preview_payload(path: str, content: str = "", truncated: bool = False, encoding: str = "", mime: str = "", error: Optional[str] = None):
@@ -1597,7 +1681,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _read_preview(file_path: Path):
-        mime = mimetypes.guess_type(str(file_path))[0] or ""
+        mime = guess_mime_type(file_path)
         if file_path.suffix.casefold() == ".pdf" or mime == "application/pdf":
             return FileSearchHandler._preview_payload(
                 str(file_path),
