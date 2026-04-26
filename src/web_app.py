@@ -546,8 +546,8 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
 .pdf-preview-frame {
   display: block;
   width: min(56%, 31rem);
-  height: 42rem;
-  min-height: 42rem;
+  height: 38rem;
+  min-height: 38rem;
   margin: 0 auto;
   border: 0;
   border-radius: 0;
@@ -642,8 +642,8 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
   }
   .pdf-preview-frame {
     width: 100%;
-    height: 34rem;
-    min-height: 34rem;
+    height: 32rem;
+    min-height: 32rem;
   }
   .image-preview {
     max-width: 100%;
