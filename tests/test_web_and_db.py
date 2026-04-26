@@ -17,7 +17,7 @@ import sys
 
 sys.path.append(str(ROOT / "src"))
 
-from file_database import add_root, connect_db, delete_root, ensure_db, get_root, init_db, list_roots, parse_folder_query, scan_root, search_folders  # type: ignore
+from file_database import add_root, connect_db, delete_root, ensure_db, get_root, init_db, list_roots, parse_folder_query, scan_root, search_folders, update_root_display_name  # type: ignore
 from web_app import CLIENT_SCRIPT, FileSearchHandler, FileSearchServer, SEARCH_PAGE_TEMPLATE, SETTINGS_PAGE_TEMPLATE, build_server_url, choose_folder_path, find_listening_pids, main, open_browser, open_path_in_file_manager, stop_existing_server  # type: ignore
 
 
@@ -348,6 +348,42 @@ class FolderDatabaseTests(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_update_root_display_name_updates_only_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root_dir = pathlib.Path(tmp) / "Root"
+            root_dir.mkdir()
+
+            conn = sqlite3.connect(":memory:")
+            try:
+                root = add_root(conn, "Old Name", root_dir)
+                updated = update_root_display_name(conn, root.id, "New Name")
+                conn.commit()
+                refreshed = get_root(conn, root.id)
+            finally:
+                conn.close()
+
+        self.assertEqual(updated.display_name, "New Name")
+        self.assertIsNotNone(refreshed)
+        self.assertEqual(refreshed.display_name, "New Name")
+        self.assertEqual(refreshed.root_path, str(root_dir.resolve()))
+
+    def test_update_root_display_name_rejects_blank_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root_dir = pathlib.Path(tmp) / "Root"
+            root_dir.mkdir()
+
+            conn = sqlite3.connect(":memory:")
+            try:
+                root = add_root(conn, "Keep Name", root_dir)
+                with self.assertRaisesRegex(ValueError, "Display Name is required"):
+                    update_root_display_name(conn, root.id, "   ")
+                refreshed = get_root(conn, root.id)
+            finally:
+                conn.close()
+
+        self.assertIsNotNone(refreshed)
+        self.assertEqual(refreshed.display_name, "Keep Name")
+
 
 class WebUiTests(unittest.TestCase):
     def test_templates_render_without_css_format_escaping(self):
@@ -373,6 +409,8 @@ class WebUiTests(unittest.TestCase):
         self.assertIn('<label for="root_id">Search Target</label>', search_html)
         self.assertIn("Folder Manager", settings_html)
         self.assertIn("Choose Folder", settings_html)
+        self.assertNotIn('id="display_name"', settings_html)
+        self.assertNotIn("Example: Company Server", settings_html)
         self.assertNotIn("root_path", settings_html)
 
     def test_client_script_restores_query_focus_after_live_search_reload(self):
@@ -451,8 +489,95 @@ class WebUiTests(unittest.TestCase):
 
         html_doc = FileSearchHandler.render_roots_table([Root()])
         self.assertIn("Server", html_doc)
+        self.assertIn("name='display_name'", html_doc)
+        self.assertIn("rename_root", html_doc)
+        self.assertIn("Save", html_doc)
         self.assertIn("Reload", html_doc)
         self.assertIn("Delete", html_doc)
+
+    def test_handle_settings_action_rename_root_updates_display_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            root_dir = base / "Root"
+            root_dir.mkdir()
+            db_path = base / "index.db"
+
+            conn = connect_db(db_path)
+            try:
+                ensure_db(conn)
+                root = add_root(conn, "Before", root_dir)
+                conn.commit()
+            finally:
+                conn.close()
+
+            handler = object.__new__(FileSearchHandler)
+            handler.db_path = str(db_path)
+            captured = {}
+            handler.send_response = lambda status: captured.setdefault("status", status)
+            handler.send_header = lambda key, value: captured.setdefault(key, value)
+            handler.end_headers = lambda: captured.setdefault("ended", True)
+            handler._read_post_params = lambda: {
+                "action": ["rename_root"],
+                "root_id": [str(root.id)],
+                "display_name": ["After"],
+                "return_to": ["/?root_id=1"],
+            }
+
+            FileSearchHandler._handle_settings_action(handler)
+
+            conn = connect_db(db_path)
+            try:
+                refreshed = get_root(conn, root.id)
+            finally:
+                conn.close()
+
+        self.assertEqual(captured["status"], 303)
+        self.assertIn("kind=info", captured["Location"])
+        self.assertIn("message=Updated+After.", captured["Location"])
+        self.assertIn("return_to=%2F%3Froot_id%3D1", captured["Location"])
+        self.assertIsNotNone(refreshed)
+        self.assertEqual(refreshed.display_name, "After")
+
+    def test_handle_settings_action_rename_root_rejects_blank_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            root_dir = base / "Root"
+            root_dir.mkdir()
+            db_path = base / "index.db"
+
+            conn = connect_db(db_path)
+            try:
+                ensure_db(conn)
+                root = add_root(conn, "Keep Name", root_dir)
+                conn.commit()
+            finally:
+                conn.close()
+
+            handler = object.__new__(FileSearchHandler)
+            handler.db_path = str(db_path)
+            captured = {}
+            handler.send_response = lambda status: captured.setdefault("status", status)
+            handler.send_header = lambda key, value: captured.setdefault("Location", value)
+            handler.end_headers = lambda: captured.setdefault("ended", True)
+            handler._read_post_params = lambda: {
+                "action": ["rename_root"],
+                "root_id": [str(root.id)],
+                "display_name": ["   "],
+            }
+
+            FileSearchHandler._handle_settings_action(handler)
+
+            conn = connect_db(db_path)
+            try:
+                refreshed = get_root(conn, root.id)
+            finally:
+                conn.close()
+
+        self.assertEqual(captured["status"], 303)
+        self.assertIn("kind=error", captured["Location"])
+        self.assertIn("Display+Name+is+required", captured["Location"])
+        self.assertIsNotNone(refreshed)
+        self.assertEqual(refreshed.display_name, "Keep Name")
 
     def test_handle_search_page_renders_minimum_html(self):
         captured = {}

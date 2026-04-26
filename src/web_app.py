@@ -26,9 +26,9 @@ from typing import Optional, Tuple
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 if __package__ in (None, ""):
-    from file_database import add_root, connect_db, delete_root, ensure_db, get_root, list_roots, parse_folder_query, scan_root, search_folders
+    from file_database import add_root, connect_db, delete_root, ensure_db, get_root, list_roots, parse_folder_query, scan_root, search_folders, update_root_display_name
 else:
-    from .file_database import add_root, connect_db, delete_root, ensure_db, get_root, list_roots, parse_folder_query, scan_root, search_folders
+    from .file_database import add_root, connect_db, delete_root, ensure_db, get_root, list_roots, parse_folder_query, scan_root, search_folders, update_root_display_name
 
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "file_index.db"
@@ -243,6 +243,9 @@ h1 {
   justify-content: flex-start;
   gap: 0.65rem;
   align-items: center;
+}
+.settings-form button[type=submit] {
+  flex: 0 0 auto;
 }
 .field {
   display: grid;
@@ -916,9 +919,24 @@ html[data-theme="dark"] .result-table tr[data-row-path]:has(.folder-name[data-ex
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
 }
 .root-actions form { margin: 0; }
+.root-display-form {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+.root-display-form input[type=text] {
+  width: min(20rem, 100%);
+  max-width: 100%;
+}
+.table-cell-stack {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
 mark {
   background: var(--mark-bg);
   color: var(--mark-text);
@@ -997,9 +1015,6 @@ SETTINGS_PAGE_TEMPLATE = Template("""<!doctype html>
     <form method="post" action="/settings/action" class="settings-form">
       <input type="hidden" name="action" value="choose_root" />
       $return_to_input
-      <div class="field">
-        <input id="display_name" type="text" name="display_name" placeholder="Example: Company Server" />
-      </div>
       <button type="submit">Choose Folder</button>
       <div class="search-tools">
         <button type="button" class="theme-toggle" data-theme-toggle aria-label="Toggle theme" title="Switch to dark mode">
@@ -1929,6 +1944,13 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                     conn.commit()
                     self._redirect_with_message("info", f"Added {root.display_name}. {count} folder(s) scanned.", return_to)
                     return
+                if action == "rename_root":
+                    root = self._require_root(conn, params)
+                    display_name = params.get("display_name", [""])[0].strip()
+                    updated_root = update_root_display_name(conn, root.id, display_name)
+                    conn.commit()
+                    self._redirect_with_message("info", f"Updated {updated_root.display_name}.", return_to)
+                    return
                 if action == "rescan_root":
                     root = self._require_root(conn, params)
                     count = scan_root(conn, root.id)
@@ -2612,6 +2634,15 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         return_to_input = FileSearchHandler._render_hidden_return_to(return_to)
         for root in roots:
             scanned = FileSearchHandler._format_scan_time(root.last_scanned_at)
+            rename_form = (
+                "<form method='post' action='/settings/action' class='root-display-form'>"
+                f"<input type='hidden' name='root_id' value='{root.id}' />"
+                "<input type='hidden' name='action' value='rename_root' />"
+                f"{return_to_input}"
+                f"<input type='text' name='display_name' value='{html.escape(root.display_name, quote=True)}' aria-label='Display Name' />"
+                "<button type='submit' class='button-secondary'>Save</button>"
+                "</form>"
+            )
             actions = (
                 "<div class='root-actions'>"
                 "<form method='post' action='/settings/action'>"
@@ -2630,9 +2661,9 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             )
             lines.append(
                 "<tr>"
-                f"<td><div class='root-name'>{html.escape(root.display_name)}</div></td>"
-                f"<td><div class='path'>{html.escape(root.root_path)}</div></td>"
-                f"<td><span class='badge'>{root.folder_count} folders</span><div class='muted'>last scan: {html.escape(scanned)}</div></td>"
+                f"<td><div class='table-cell-stack'><div class='root-name'>{html.escape(root.display_name)}</div>{rename_form}</div></td>"
+                f"<td><div class='table-cell-stack'><div class='path'>{html.escape(root.root_path)}</div></div></td>"
+                f"<td><div class='table-cell-stack'><span class='badge'>{root.folder_count} folders</span><div class='muted'>last scan: {html.escape(scanned)}</div></div></td>"
                 f"<td>{actions}</td>"
                 "</tr>"
             )

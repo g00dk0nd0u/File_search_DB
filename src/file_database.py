@@ -188,6 +188,22 @@ def delete_root(conn: sqlite3.Connection, root_id: int) -> None:
     conn.execute("DELETE FROM roots WHERE id = ?", (root_id,))
 
 
+def update_root_display_name(conn: sqlite3.Connection, root_id: int, display_name: str) -> RootRecord:
+    ensure_db(conn)
+    normalized_name = (display_name or "").strip()
+    if not normalized_name:
+        raise ValueError("Display Name is required")
+
+    conn.execute(
+        "UPDATE roots SET display_name = ? WHERE id = ?",
+        (normalized_name, root_id),
+    )
+    root = get_root(conn, root_id)
+    if root is None:
+        raise ValueError("Search target folder not found")
+    return root
+
+
 def scan_root(conn: sqlite3.Connection, root_id: int) -> int:
     ensure_db(conn)
     root = get_root(conn, root_id)
