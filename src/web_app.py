@@ -419,6 +419,9 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
   justify-content: center;
   align-items: flex-start;
 }
+.preview-folder-list {
+  width: 100%;
+}
 .children-panel {
   min-width: 18rem;
   width: max-content;
@@ -1099,6 +1102,46 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   };
 
+  const createPreviewFolderOpenButton = function (path, label) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "preview-open-button";
+    button.setAttribute("data-open-folder-path", path);
+    button.setAttribute("aria-label", label);
+    button.setAttribute("title", label);
+    button.textContent = "";
+    return button;
+  };
+
+  const loadFolderPreview = async function (folderPath, panel, rootId) {
+    if (!folderPath || !panel || !rootId) {
+      return;
+    }
+
+    renderPreviewMessage(panel, "Loading...", "preview-loading");
+
+    const query = new URLSearchParams({ root_id: rootId, path: folderPath });
+    const currentSearchQuery = document.getElementById("q");
+    if (currentSearchQuery && currentSearchQuery.value.trim()) {
+      query.set("q", currentSearchQuery.value.trim());
+    }
+    try {
+      const response = await fetch("/children?" + query.toString(), { method: "GET", cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok) {
+        renderPreviewMessage(panel, payload && payload.error ? String(payload.error) : "Could not load items.", "preview-error");
+        return;
+      }
+      const listWrap = document.createElement("div");
+      listWrap.className = "preview-folder-list";
+      renderChildrenItems(listWrap, payload);
+      const openLabel = "Open in Finder";
+      panel.replaceChildren(listWrap, createPreviewFolderOpenButton(folderPath, openLabel));
+    } catch (_error) {
+      renderPreviewMessage(panel, "Could not load items.", "preview-error");
+    }
+  };
+
   const loadChildrenForDetail = async function (detailRow, folderPath, rootId, selectedChildPath) {
     const panel = detailRow ? detailRow.querySelector("[data-child-panel]") : null;
     const previewPanel = detailRow ? detailRow.querySelector("[data-preview-panel]") : null;
@@ -1213,15 +1256,15 @@ document.addEventListener("DOMContentLoaded", function () {
     const childLink = target.closest("[data-child-path]");
     if (childLink) {
       event.preventDefault();
-      const childType = childLink.getAttribute("data-child-type") || "";
-      const path = childLink.getAttribute("data-child-path") || "";
-      if (childType === "dir") {
-        await openPath(path);
-        return;
-      }
       const detailRow = childLink.closest("[data-expand-row]");
       const previewPanel = detailRow ? detailRow.querySelector("[data-preview-panel]") : null;
       const rootId = detailRow ? detailRow.getAttribute("data-root-id") || "" : "";
+      const childType = childLink.getAttribute("data-child-type") || "";
+      const path = childLink.getAttribute("data-child-path") || "";
+      if (childType === "dir") {
+        await loadFolderPreview(path, previewPanel, rootId);
+        return;
+      }
       await loadPreview(childLink, previewPanel, rootId);
       return;
     }
