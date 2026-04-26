@@ -190,6 +190,22 @@ h1 {
   font-weight: 600;
 }
 .nav-link:hover { background: var(--surface-muted); }
+.add-directory-button {
+  height: var(--control-height);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.3rem 0.8rem;
+  border: 1px solid var(--border-button);
+  border-radius: 6px;
+  background: var(--nav-bg);
+  color: var(--link-color);
+  font-size: 14px;
+  font-weight: 600;
+}
+.add-directory-button:hover {
+  background: var(--surface-muted);
+}
 .theme-toggle {
   width: 2rem;
   min-width: 2rem;
@@ -924,15 +940,31 @@ html[data-theme="dark"] .result-table tr[data-row-path]:has(.folder-name[data-ex
   flex-wrap: wrap;
 }
 .root-actions form { margin: 0; }
-.root-display-form {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  flex-wrap: wrap;
+.settings-roots-table th,
+.settings-roots-table td {
+  padding: 0.55rem 1rem;
 }
-.root-display-form input[type=text] {
-  width: min(20rem, 100%);
-  max-width: 100%;
+.settings-roots-table td {
+  vertical-align: middle;
+}
+.settings-col-display {
+  width: 20rem;
+}
+.settings-col-path,
+.settings-col-status {
+  min-width: 0;
+}
+.settings-display-input {
+  width: 100%;
+  max-width: 18rem;
+  height: var(--control-height);
+  font-size: 14px;
+}
+.settings-display-input.is-saved {
+  color: var(--text-muted);
+}
+.settings-display-input.is-editing {
+  color: var(--text-color);
 }
 .table-cell-stack {
   display: grid;
@@ -1017,7 +1049,7 @@ SETTINGS_PAGE_TEMPLATE = Template("""<!doctype html>
     <form method="post" action="/settings/action" class="settings-form">
       <input type="hidden" name="action" value="choose_root" />
       $return_to_input
-      <button type="submit">Choose Folder</button>
+      <button type="submit" class="add-directory-button">Add Directory</button>
       <div class="search-tools">
         <button type="button" class="theme-toggle" data-theme-toggle aria-label="Toggle theme" title="Switch to dark mode">
           <span class="theme-toggle-icon" aria-hidden="true">☾</span>
@@ -1113,6 +1145,131 @@ document.addEventListener("DOMContentLoaded", function () {
     } catch (_error) {
     }
   };
+
+  const ensureNoticeElement = function () {
+    let notice = document.querySelector(".notice");
+    if (notice) {
+      return notice;
+    }
+    notice = document.createElement("div");
+    notice.className = "notice";
+    const toolbar = document.querySelector(".toolbar-shell");
+    if (toolbar && toolbar.parentNode) {
+      toolbar.insertAdjacentElement("afterend", notice);
+    } else {
+      document.body.insertBefore(notice, document.body.firstChild);
+    }
+    return notice;
+  };
+
+  const setSettingsNotice = function (message, kind) {
+    if (!message) {
+      const notice = document.querySelector(".notice");
+      if (notice) {
+        notice.remove();
+      }
+      return;
+    }
+    const notice = ensureNoticeElement();
+    notice.className = kind === "error" ? "notice is-error" : "notice";
+    notice.textContent = message;
+  };
+
+  const settingsDisplayInputs = Array.from(document.querySelectorAll(".settings-display-input"));
+  settingsDisplayInputs.forEach(function (input) {
+    let debounceTimer = 0;
+    let lastRequestId = 0;
+    let editVersion = 0;
+
+    const markSaved = function () {
+      input.classList.add("is-saved");
+      input.classList.remove("is-editing");
+    };
+
+    const markEditing = function () {
+      input.classList.add("is-editing");
+      input.classList.remove("is-saved");
+    };
+
+    const revertToOriginal = function () {
+      input.value = input.dataset.originalValue || "";
+      markSaved();
+    };
+
+    const saveDisplayName = async function () {
+      window.clearTimeout(debounceTimer);
+      const rootId = input.dataset.rootId || "";
+      const currentValue = input.value;
+      const trimmedValue = currentValue.trim();
+      const originalValue = input.dataset.originalValue || "";
+      const currentEditVersion = editVersion;
+
+      if (!trimmedValue) {
+        revertToOriginal();
+        setSettingsNotice("Display Name is required", "error");
+        return;
+      }
+      if (trimmedValue === originalValue) {
+        input.value = originalValue;
+        markSaved();
+        return;
+      }
+
+      const requestId = lastRequestId + 1;
+      lastRequestId = requestId;
+      try {
+        const response = await fetch("/settings/rename", {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            "Content-Type": "application/json; charset=utf-8",
+          },
+          body: JSON.stringify({ root_id: rootId, display_name: trimmedValue }),
+        });
+        const payload = await response.json();
+        if (requestId !== lastRequestId || currentEditVersion !== editVersion) {
+          return;
+        }
+        if (!response.ok || !payload || !payload.success) {
+          throw new Error(payload && payload.message ? payload.message : "Failed to update display name");
+        }
+        input.value = payload.display_name || trimmedValue;
+        input.dataset.originalValue = input.value;
+        markSaved();
+        setSettingsNotice("Display Name updated", "info");
+      } catch (error) {
+        if (currentEditVersion !== editVersion) {
+          return;
+        }
+        revertToOriginal();
+        setSettingsNotice(error && error.message ? error.message : "Failed to update display name", "error");
+      }
+    };
+
+    markSaved();
+    input.addEventListener("input", function () {
+      editVersion += 1;
+      markEditing();
+      setSettingsNotice("", "info");
+      window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(function () {
+        saveDisplayName();
+      }, 1000);
+    });
+    input.addEventListener("blur", function () {
+      if (!input.classList.contains("is-editing")) {
+        return;
+      }
+      saveDisplayName();
+    });
+    input.addEventListener("keydown", function (event) {
+      if (event.key !== "Enter") {
+        return;
+      }
+      event.preventDefault();
+      saveDisplayName();
+    });
+  });
 
   const uiStateStorageKey = "file-search-db-ui-state:" + window.location.pathname + window.location.search;
   const readUiState = function () {
@@ -1854,6 +2011,9 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         if parsed.path == "/settings/action":
             self._handle_settings_action()
             return
+        if parsed.path == "/settings/rename":
+            self._handle_settings_rename()
+            return
         if parsed.path == "/move_file":
             self._handle_move_file()
             return
@@ -1946,13 +2106,6 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                     conn.commit()
                     self._redirect_with_message("info", f"Added {root.display_name}. {count} folder(s) scanned.", return_to)
                     return
-                if action == "rename_root":
-                    root = self._require_root(conn, params)
-                    display_name = params.get("display_name", [""])[0].strip()
-                    updated_root = update_root_display_name(conn, root.id, display_name)
-                    conn.commit()
-                    self._redirect_with_message("info", f"Updated {updated_root.display_name}.", return_to)
-                    return
                 if action == "rescan_root":
                     root = self._require_root(conn, params)
                     count = scan_root(conn, root.id)
@@ -1970,6 +2123,29 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                 conn.close()
         except Exception as exc:
             self._redirect_with_message("error", str(exc), return_to)
+
+    def _handle_settings_rename(self):
+        try:
+            payload = self._read_json_body()
+            root_id = int(str(payload.get("root_id", "")).strip() or "0")
+            if root_id <= 0:
+                raise ValueError("root_id is required")
+            display_name = str(payload.get("display_name", "")).strip()
+
+            db_path = Path(self.db_path)
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            conn = connect_db(db_path)
+            try:
+                ensure_db(conn)
+                updated_root = update_root_display_name(conn, root_id, display_name)
+                conn.commit()
+            finally:
+                conn.close()
+            self._send_json(HTTPStatus.OK, {"success": True, "display_name": updated_root.display_name})
+        except ValueError as exc:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"success": False, "message": str(exc)})
+        except Exception as exc:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"success": False, "message": str(exc)})
 
     def _handle_open_path(self, parsed):
         params = parse_qs(parsed.query)
@@ -2629,43 +2805,40 @@ class FileSearchHandler(BaseHTTPRequestHandler):
             return "<div class='empty'>No search target folders have been added yet.</div>"
 
         lines = [
-            "<table>",
-            "<thead><tr><th>Display Name</th><th>Path</th><th>Status</th><th>Actions</th></tr></thead>",
+            "<table class='settings-roots-table'>",
+            "<thead><tr><th class='settings-col-display'>Display Name</th><th class='settings-col-path'>Path</th><th class='settings-col-status'>Status</th><th>Actions</th></tr></thead>",
             "<tbody>",
         ]
-        return_to_input = FileSearchHandler._render_hidden_return_to(return_to)
         for root in roots:
             scanned = FileSearchHandler._format_scan_time(root.last_scanned_at)
-            rename_form = (
-                "<form method='post' action='/settings/action' class='root-display-form'>"
-                f"<input type='hidden' name='root_id' value='{root.id}' />"
-                "<input type='hidden' name='action' value='rename_root' />"
-                f"{return_to_input}"
-                f"<input type='text' name='display_name' value='{html.escape(root.display_name, quote=True)}' aria-label='Display Name' />"
-                "<button type='submit' class='button-secondary'>Save</button>"
-                "</form>"
+            display_input = (
+                f"<input type='text' class='settings-display-input is-saved' name='display_name' "
+                f"value='{html.escape(root.display_name, quote=True)}' "
+                f"data-root-id='{root.id}' "
+                f"data-original-value='{html.escape(root.display_name, quote=True)}' "
+                "aria-label='Display Name' />"
             )
             actions = (
                 "<div class='root-actions'>"
                 "<form method='post' action='/settings/action'>"
                 f"<input type='hidden' name='root_id' value='{root.id}' />"
                 "<input type='hidden' name='action' value='rescan_root' />"
-                f"{return_to_input}"
+                f"{FileSearchHandler._render_hidden_return_to(return_to)}"
                 "<button type='submit' class='button-secondary'>Reload</button>"
                 "</form>"
                 "<form method='post' action='/settings/action'>"
                 f"<input type='hidden' name='root_id' value='{root.id}' />"
                 "<input type='hidden' name='action' value='delete_root' />"
-                f"{return_to_input}"
+                f"{FileSearchHandler._render_hidden_return_to(return_to)}"
                 "<button type='submit' class='button-danger'>Delete</button>"
                 "</form>"
                 "</div>"
             )
             lines.append(
                 "<tr>"
-                f"<td><div class='table-cell-stack'><div class='root-name'>{html.escape(root.display_name)}</div>{rename_form}</div></td>"
-                f"<td><div class='table-cell-stack'><div class='path'>{html.escape(root.root_path)}</div></div></td>"
-                f"<td><div class='table-cell-stack'><span class='badge'>{root.folder_count} folders</span><div class='muted'>last scan: {html.escape(scanned)}</div></div></td>"
+                f"<td class='settings-col-display'><div class='table-cell-stack'>{display_input}</div></td>"
+                f"<td class='settings-col-path'><div class='table-cell-stack'><div class='path'>{html.escape(root.root_path)}</div></div></td>"
+                f"<td class='settings-col-status'><div class='table-cell-stack'><span class='badge'>{root.folder_count} folders</span><div class='muted'>last scan: {html.escape(scanned)}</div></div></td>"
                 f"<td>{actions}</td>"
                 "</tr>"
             )

@@ -408,7 +408,8 @@ class WebUiTests(unittest.TestCase):
         self.assertIn('placeholder="Enter keyword"', search_html)
         self.assertIn('<label for="root_id">Search Target</label>', search_html)
         self.assertIn("Folder Manager", settings_html)
-        self.assertIn("Choose Folder", settings_html)
+        self.assertIn("Add Directory", settings_html)
+        self.assertNotIn("Choose Folder", settings_html)
         self.assertNotIn('id="display_name"', settings_html)
         self.assertNotIn("Example: Company Server", settings_html)
         self.assertNotIn("root_path", settings_html)
@@ -421,6 +422,8 @@ class WebUiTests(unittest.TestCase):
         self.assertNotIn("!queryInput.value", restore_block)
         self.assertIn('fetch("/children?" + query.toString()', CLIENT_SCRIPT)
         self.assertIn('fetch("/preview?" + query.toString()', CLIENT_SCRIPT)
+        self.assertIn('fetch("/settings/rename"', CLIENT_SCRIPT)
+        self.assertIn("window.setTimeout(function () {", CLIENT_SCRIPT)
         self.assertIn("data-expand-toggle", CLIENT_SCRIPT)
         self.assertIn("data-open-folder-path", CLIENT_SCRIPT)
         self.assertIn("buildFileUrl", CLIENT_SCRIPT)
@@ -489,13 +492,17 @@ class WebUiTests(unittest.TestCase):
 
         html_doc = FileSearchHandler.render_roots_table([Root()])
         self.assertIn("Server", html_doc)
-        self.assertIn("name='display_name'", html_doc)
-        self.assertIn("rename_root", html_doc)
-        self.assertIn("Save", html_doc)
+        self.assertIn("settings-roots-table", html_doc)
+        self.assertIn("class='settings-display-input is-saved'", html_doc)
+        self.assertIn("data-root-id='3'", html_doc)
+        self.assertIn("data-original-value='Server'", html_doc)
+        self.assertNotIn("rename_root", html_doc)
+        self.assertNotIn(">Save<", html_doc)
+        self.assertNotIn("class='root-name'", html_doc)
         self.assertIn("Reload", html_doc)
         self.assertIn("Delete", html_doc)
 
-    def test_handle_settings_action_rename_root_updates_display_name(self):
+    def test_handle_settings_rename_updates_display_name(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = pathlib.Path(tmp)
             root_dir = base / "Root"
@@ -512,18 +519,17 @@ class WebUiTests(unittest.TestCase):
 
             handler = object.__new__(FileSearchHandler)
             handler.db_path = str(db_path)
-            captured = {}
             handler.send_response = lambda status: captured.setdefault("status", status)
             handler.send_header = lambda key, value: captured.setdefault(key, value)
             handler.end_headers = lambda: captured.setdefault("ended", True)
-            handler._read_post_params = lambda: {
-                "action": ["rename_root"],
-                "root_id": [str(root.id)],
-                "display_name": ["After"],
-                "return_to": ["/?root_id=1"],
+            handler.wfile = io.BytesIO()
+            handler._read_json_body = lambda: {
+                "root_id": str(root.id),
+                "display_name": "After",
             }
 
-            FileSearchHandler._handle_settings_action(handler)
+            captured = {}
+            FileSearchHandler._handle_settings_rename(handler)
 
             conn = connect_db(db_path)
             try:
@@ -531,14 +537,14 @@ class WebUiTests(unittest.TestCase):
             finally:
                 conn.close()
 
-        self.assertEqual(captured["status"], 303)
-        self.assertIn("kind=info", captured["Location"])
-        self.assertIn("message=Updated+After.", captured["Location"])
-        self.assertIn("return_to=%2F%3Froot_id%3D1", captured["Location"])
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(captured["status"], 200)
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["display_name"], "After")
         self.assertIsNotNone(refreshed)
         self.assertEqual(refreshed.display_name, "After")
 
-    def test_handle_settings_action_rename_root_rejects_blank_name(self):
+    def test_handle_settings_rename_rejects_blank_name(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = pathlib.Path(tmp)
             root_dir = base / "Root"
@@ -555,17 +561,17 @@ class WebUiTests(unittest.TestCase):
 
             handler = object.__new__(FileSearchHandler)
             handler.db_path = str(db_path)
-            captured = {}
             handler.send_response = lambda status: captured.setdefault("status", status)
-            handler.send_header = lambda key, value: captured.setdefault("Location", value)
+            handler.send_header = lambda key, value: captured.setdefault(key, value)
             handler.end_headers = lambda: captured.setdefault("ended", True)
-            handler._read_post_params = lambda: {
-                "action": ["rename_root"],
-                "root_id": [str(root.id)],
-                "display_name": ["   "],
+            handler.wfile = io.BytesIO()
+            handler._read_json_body = lambda: {
+                "root_id": str(root.id),
+                "display_name": "   ",
             }
 
-            FileSearchHandler._handle_settings_action(handler)
+            captured = {}
+            FileSearchHandler._handle_settings_rename(handler)
 
             conn = connect_db(db_path)
             try:
@@ -573,9 +579,10 @@ class WebUiTests(unittest.TestCase):
             finally:
                 conn.close()
 
-        self.assertEqual(captured["status"], 303)
-        self.assertIn("kind=error", captured["Location"])
-        self.assertIn("Display+Name+is+required", captured["Location"])
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(captured["status"], 400)
+        self.assertFalse(payload["success"])
+        self.assertIn("Display Name is required", payload["message"])
         self.assertIsNotNone(refreshed)
         self.assertEqual(refreshed.display_name, "Keep Name")
 
