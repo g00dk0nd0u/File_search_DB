@@ -409,18 +409,15 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
   min-width: 0;
 }
 .preview-panel {
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  background: var(--surface-color);
-  padding: 0.55rem 0.65rem;
-}
-.preview-panel.is-image-preview {
   position: relative;
   min-width: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
   padding: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
 }
 .children-panel {
   min-width: 18rem;
@@ -537,6 +534,8 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
   margin: 0;
   max-height: 18rem;
   overflow: auto;
+  background: transparent;
+  border: 0;
   white-space: pre-wrap;
   word-break: break-word;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -544,28 +543,27 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
   line-height: 1.45;
   color: var(--text-color);
 }
-.preview-meta {
-  color: var(--text-subtle);
-  font-size: 0.74rem;
-  margin-bottom: 0.35rem;
-}
 .pdf-preview-frame {
-  width: 100%;
-  min-height: 28rem;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  background: var(--surface-soft);
+  display: block;
+  width: min(56%, 31rem);
+  height: 42rem;
+  min-height: 42rem;
+  margin: 0 auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 .image-preview {
   display: block;
-  max-width: 100%;
+  max-width: min(100%, 34rem);
   max-height: 34rem;
-  border: 0;
+  margin: 0 auto;
+  border: 1px solid var(--border-soft);
   border-radius: 6px;
-  background: transparent;
+  background: var(--surface-color);
   object-fit: contain;
 }
-.image-open-button {
+.preview-open-button {
   position: absolute;
   top: 0.35rem;
   right: 0.35rem;
@@ -577,12 +575,13 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
   color: var(--link-color);
   opacity: 0.85;
   text-decoration: none;
+  z-index: 2;
 }
-.image-open-button:hover {
+.preview-open-button:hover {
   opacity: 1;
   background: var(--surface-hover);
 }
-.image-open-button::before {
+.preview-open-button::before {
   content: "";
   position: absolute;
   left: 0.42rem;
@@ -592,7 +591,7 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
   border: 1.5px solid currentColor;
   border-radius: 2px;
 }
-.image-open-button::after {
+.preview-open-button::after {
   content: "";
   position: absolute;
   right: 0.38rem;
@@ -601,17 +600,6 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
   height: 0.48rem;
   border-top: 1.7px solid currentColor;
   border-right: 1.7px solid currentColor;
-}
-.pdf-fallback-link {
-  display: inline-flex;
-  margin-top: 0.45rem;
-  color: var(--link-color);
-  font-size: 0.82rem;
-  font-weight: 600;
-  text-decoration: none;
-}
-.pdf-fallback-link:hover {
-  text-decoration: underline;
 }
 .folder-name, .root-name, .parent-folder-name {
   font-weight: 600;
@@ -651,6 +639,14 @@ tr[data-row-path]:has(.folder-name[data-expanded="true"]) td {
   .children-panel {
     width: 100%;
     min-width: 0;
+  }
+  .pdf-preview-frame {
+    width: 100%;
+    height: 34rem;
+    min-height: 34rem;
+  }
+  .image-preview {
+    max-width: 100%;
   }
 }
 .path {
@@ -918,12 +914,23 @@ document.addEventListener("DOMContentLoaded", function () {
   };
 
   const renderPreviewMessage = function (panel, message, className) {
-    panel.classList.remove("is-image-preview");
     panel.textContent = "";
     const messageElement = document.createElement("div");
     messageElement.className = className;
     messageElement.textContent = message;
     panel.appendChild(messageElement);
+  };
+
+  const appendPreviewOpenButton = function (panel, href, label) {
+    const button = document.createElement("a");
+    button.className = "preview-open-button";
+    button.href = href;
+    button.target = "_blank";
+    button.rel = "noopener";
+    button.setAttribute("aria-label", label);
+    button.setAttribute("title", label);
+    button.textContent = "";
+    panel.appendChild(button);
   };
 
   const isPdfPath = function (path) {
@@ -962,31 +969,20 @@ document.addEventListener("DOMContentLoaded", function () {
   };
 
   const renderPdfPreview = function (panel, rootId, path) {
-    panel.classList.remove("is-image-preview");
     panel.textContent = "";
-    const meta = document.createElement("div");
-    meta.className = "preview-meta";
-    meta.textContent = (path.split(/[\\\\/]/).pop() || path) + " / PDF";
-    panel.appendChild(meta);
 
     const fileUrl = buildFileUrl(rootId, path);
+    const pdfViewUrl = fileUrl + "#zoom=page-fit";
     const frame = document.createElement("iframe");
     frame.className = "pdf-preview-frame";
-    frame.src = fileUrl;
-    frame.title = meta.textContent;
+    frame.src = pdfViewUrl;
+    frame.title = path.split(/[\\\\/]/).pop() || path;
     panel.appendChild(frame);
 
-    const fallback = document.createElement("a");
-    fallback.className = "pdf-fallback-link";
-    fallback.href = fileUrl;
-    fallback.target = "_blank";
-    fallback.rel = "noopener";
-    fallback.textContent = "Open PDF in new tab";
-    panel.appendChild(fallback);
+    appendPreviewOpenButton(panel, pdfViewUrl, "Open PDF in new tab");
   };
 
-  const renderImagePreview = function (panel, rootId, path, mime) {
-    panel.classList.add("is-image-preview");
+  const renderImagePreview = function (panel, rootId, path) {
     panel.textContent = "";
 
     const fileUrl = buildFileUrl(rootId, path);
@@ -996,34 +992,18 @@ document.addEventListener("DOMContentLoaded", function () {
     image.alt = path.split(/[\\\\/]/).pop() || path;
     panel.appendChild(image);
 
-    const fallback = document.createElement("a");
-    fallback.className = "image-open-button";
-    fallback.href = buildImageViewUrl(rootId, path);
-    fallback.target = "_blank";
-    fallback.rel = "noopener";
-    fallback.setAttribute("aria-label", "Open image in new tab");
-    fallback.setAttribute("title", "Open image in new tab");
-    fallback.textContent = "";
-    panel.appendChild(fallback);
+    appendPreviewOpenButton(panel, buildImageViewUrl(rootId, path), "Open image in new tab");
   };
 
-  const renderOfficePreviewNote = function (panel, rootId, path, mime) {
-    panel.classList.remove("is-image-preview");
+  const renderOfficePreviewNote = function (panel, rootId, path) {
     panel.textContent = "";
-    const meta = document.createElement("div");
-    meta.className = "preview-meta";
-    meta.textContent = (path.split(/[\\\\/]/).pop() || path) + (mime ? " / " + mime : "");
-    panel.appendChild(meta);
 
-    renderPreviewMessage(panel, "Office files cannot be previewed directly in this browser. Open the file in a new tab or desktop app.", "preview-note");
+    const note = document.createElement("div");
+    note.className = "preview-note";
+    note.textContent = "Office files cannot be previewed directly in this browser. Open the file in a new tab or desktop app.";
+    panel.appendChild(note);
 
-    const fallback = document.createElement("a");
-    fallback.className = "pdf-fallback-link";
-    fallback.href = buildFileUrl(rootId, path);
-    fallback.target = "_blank";
-    fallback.rel = "noopener";
-    fallback.textContent = "Open file";
-    panel.appendChild(fallback);
+    appendPreviewOpenButton(panel, buildFileUrl(rootId, path), "Open file in new tab");
   };
 
   const loadPreview = async function (link, panel, rootId) {
@@ -1064,24 +1044,21 @@ document.addEventListener("DOMContentLoaded", function () {
         return;
       }
       if (payload && isImageMime(payload.mime)) {
-        renderImagePreview(panel, rootId, path, payload.mime);
+        renderImagePreview(panel, rootId, path);
         return;
       }
       if (payload && isOfficeMime(payload.mime, path)) {
-        renderOfficePreviewNote(panel, rootId, path, payload.mime);
+        renderOfficePreviewNote(panel, rootId, path);
         return;
       }
 
-      panel.classList.remove("is-image-preview");
       panel.textContent = "";
-      const meta = document.createElement("div");
-      meta.className = "preview-meta";
-      const name = path.split(/[\\\\/]/).pop() || path;
-      meta.textContent = name + (payload.truncated ? " / showing beginning only" : "");
-      panel.appendChild(meta);
-
       if (!payload.content) {
-        renderPreviewMessage(panel, payload.error || "No previewable text content is available.", "preview-note");
+        const note = document.createElement("div");
+        note.className = "preview-note";
+        note.textContent = payload.error || "No previewable text content is available.";
+        panel.appendChild(note);
+        appendPreviewOpenButton(panel, buildFileUrl(rootId, path), "Open file in new tab");
         return;
       }
 
@@ -1089,6 +1066,7 @@ document.addEventListener("DOMContentLoaded", function () {
       pre.className = "preview-content";
       pre.textContent = payload.content;
       panel.appendChild(pre);
+      appendPreviewOpenButton(panel, buildFileUrl(rootId, path), "Open file in new tab");
     } catch (_error) {
       renderPreviewMessage(panel, "Could not load preview.", "preview-error");
     }
