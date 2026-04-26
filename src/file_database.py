@@ -31,6 +31,7 @@ class FolderRecord:
     depth: int
     updated_at: str
     match_kind: str
+    folder_name_matched: bool = False
     file_match_count: int = 0
     matched_file_names: Tuple[str, ...] = ()
     matched_file_paths: Tuple[str, ...] = ()
@@ -260,6 +261,7 @@ def search_folders(conn: sqlite3.Connection, root_id: int, query: str, limit: in
         record = _folder_from_row(row)
         folder_records[record.path] = record
 
+    direct_file_counts: Dict[str, int] = {}
     file_hits: Dict[str, Dict[str, object]] = {}
     if parsed_query.positive_groups:
         file_rows = conn.execute(
@@ -272,10 +274,12 @@ def search_folders(conn: sqlite3.Connection, root_id: int, query: str, limit: in
             (root_id,),
         ).fetchall()
         for folder_path, file_path, file_name in file_rows:
+            folder_key = str(folder_path)
+            direct_file_counts[folder_key] = direct_file_counts.get(folder_key, 0) + 1
             if not _matches_parsed_query(str(file_name), parsed_query):
                 continue
             bucket = file_hits.setdefault(
-                str(folder_path),
+                folder_key,
                 {"count": 0, "names": [], "paths": []},
             )
             bucket["count"] = int(bucket["count"]) + 1
@@ -301,7 +305,8 @@ def search_folders(conn: sqlite3.Connection, root_id: int, query: str, limit: in
                 depth=0,
                 updated_at=root.last_scanned_at,
                 match_kind="name+file" if root_file_info else "name",
-                file_match_count=int(root_file_info["count"]) if root_file_info else 0,
+                folder_name_matched=True,
+                file_match_count=direct_file_counts.get(root.root_path, 0),
                 matched_file_names=tuple(root_file_info["names"]) if root_file_info else (),
                 matched_file_paths=tuple(root_file_info["paths"]) if root_file_info else (),
             )
@@ -321,7 +326,8 @@ def search_folders(conn: sqlite3.Connection, root_id: int, query: str, limit: in
                     depth=record.depth,
                     updated_at=record.updated_at,
                     match_kind="name+file" if file_info else "name",
-                    file_match_count=int(file_info["count"]) if file_info else 0,
+                    folder_name_matched=True,
+                    file_match_count=direct_file_counts.get(record.path, 0),
                     matched_file_names=tuple(file_info["names"]) if file_info else (),
                     matched_file_paths=tuple(file_info["paths"]) if file_info else (),
                 )
@@ -341,6 +347,7 @@ def search_folders(conn: sqlite3.Connection, root_id: int, query: str, limit: in
                 depth=0,
                 updated_at=root.last_scanned_at,
                 match_kind="file",
+                folder_name_matched=False,
             )
         if record is None:
             continue
@@ -354,6 +361,7 @@ def search_folders(conn: sqlite3.Connection, root_id: int, query: str, limit: in
                 depth=record.depth,
                 updated_at=record.updated_at,
                 match_kind="file",
+                folder_name_matched=False,
                 file_match_count=int(file_info["count"]),
                 matched_file_names=tuple(file_info["names"]),
                 matched_file_paths=tuple(file_info["paths"]),

@@ -113,6 +113,41 @@ class FolderDatabaseTests(unittest.TestCase):
         self.assertEqual(parent_only_rows[0].name, "ParentTarget")
         self.assertNotIn("Other", [row.name for row in rows + parent_only_rows])
 
+    def test_search_folders_prefers_folder_name_match_and_counts_direct_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root_dir = pathlib.Path(tmp) / "Root"
+            matched_dir = root_dir / "商品_cat"
+            file_only_dir = root_dir / "Other"
+            matched_dir.mkdir(parents=True)
+            file_only_dir.mkdir(parents=True)
+            for name in [
+                "main.png",
+                "front.png",
+                "side.png",
+                "back.png",
+                "Cat_Papercraft_Template.pdf",
+                "sample2.png",
+                "sample1.png",
+            ]:
+                (matched_dir / name).write_text("x", encoding="utf-8")
+            (file_only_dir / "cat_notes.txt").write_text("x", encoding="utf-8")
+
+            conn = sqlite3.connect(":memory:")
+            try:
+                root = add_root(conn, "Root", root_dir)
+                scan_root(conn, root.id)
+                conn.commit()
+                rows = search_folders(conn, root.id, "cat")
+            finally:
+                conn.close()
+
+        rows_by_name = {row.name: row for row in rows}
+        self.assertTrue(rows_by_name["商品_cat"].folder_name_matched)
+        self.assertEqual(rows_by_name["商品_cat"].file_match_count, 7)
+        self.assertEqual(rows_by_name["商品_cat"].matched_file_names, ("Cat_Papercraft_Template.pdf",))
+        self.assertFalse(rows_by_name["Other"].folder_name_matched)
+        self.assertEqual(rows_by_name["Other"].file_match_count, 1)
+
     def test_parse_folder_query_supports_google_like_operators(self):
         parsed = parse_folder_query('alpha beta OR "gamma delta" -draft')
         self.assertEqual(parsed.positive_groups, [["alpha", "beta"], ["gamma delta"]])
@@ -253,19 +288,21 @@ class WebUiTests(unittest.TestCase):
             depth = 1
             updated_at = ""
             match_kind = "name"
+            folder_name_matched = True
 
         html_doc = FileSearchHandler.render_results([Row()], "Project")
-        self.assertIn("/<mark>Project</mark>Docs", html_doc)
+        self.assertIn("<mark>Project</mark>Docs", html_doc)
         self.assertNotIn("/tmp/<mark>Project</mark>Docs", html_doc)
         self.assertIn("data-row-path='/tmp/ProjectDocs'", html_doc)
         self.assertIn("data-expand-toggle='1'", html_doc)
         self.assertIn("data-expand-path='/tmp/ProjectDocs'", html_doc)
+        self.assertIn("data-folder-name-matched='1'", html_doc)
         self.assertIn("data-open-folder-path='/tmp/ProjectDocs'", html_doc)
         self.assertIn("class='result-detail-row'", html_doc)
         self.assertIn("data-child-panel='1'", html_doc)
         self.assertIn("data-preview-panel='1'", html_doc)
         self.assertIn("colspan='1'", html_doc)
-        self.assertIn("<thead><tr><th>親フォルダ/フォルダ</th></tr></thead>", html_doc)
+        self.assertNotIn("<thead>", html_doc)
         self.assertNotIn("<th>親フォルダ</th><th>フォルダ</th>", html_doc)
         self.assertNotIn("<th>パス</th>", html_doc)
         self.assertNotIn("<th>操作</th>", html_doc)
@@ -374,6 +411,19 @@ class WebUiTests(unittest.TestCase):
             [("dir", "a_dir"), ("dir", "z_dir"), ("file", "a.txt"), ("file", "b.txt")],
         )
 
+    def test_collect_children_items_keeps_all_direct_files_for_folder_name_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            (base / "child_dir").mkdir()
+            (base / "Cat_hit.pdf").write_text("x", encoding="utf-8")
+            (base / "main.png").write_text("x", encoding="utf-8")
+            items = FileSearchHandler._collect_children_items(base, "cat", folder_name_matched=True)
+
+        self.assertEqual(
+            [(item["type"], item["name"], item["is_match"]) for item in items],
+            [("file", "Cat_hit.pdf", True), ("file", "main.png", False)],
+        )
+
     def test_handle_children_returns_direct_items(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = pathlib.Path(tmp)
@@ -408,6 +458,43 @@ class WebUiTests(unittest.TestCase):
         self.assertEqual(body["error"], None)
         self.assertEqual([item["type"] for item in body["items"]], ["dir", "file"])
         self.assertEqual({item["name"] for item in body["items"]}, {"Sub", "file.txt"})
+
+    def test_handle_children_returns_all_direct_files_for_folder_name_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            root_dir = base / "Root"
+            target_dir = root_dir / "商品_cat"
+            target_dir.mkdir(parents=True)
+            (target_dir / "Cat_hit.pdf").write_text("x", encoding="utf-8")
+            (target_dir / "main.png").write_text("x", encoding="utf-8")
+            (target_dir / "old_svg").mkdir()
+
+            db_path = base / "index.db"
+            conn = connect_db(db_path)
+            try:
+                ensure_db(conn)
+                root = add_root(conn, "Root", root_dir)
+                conn.commit()
+            finally:
+                conn.close()
+
+            handler = object.__new__(FileSearchHandler)
+            handler.db_path = str(db_path)
+            captured = {}
+            handler.send_response = lambda status: captured.setdefault("status", status)
+            handler.send_header = lambda key, value: captured.setdefault(key, value)
+            handler.end_headers = lambda: captured.setdefault("ended", True)
+            handler.wfile = io.BytesIO()
+
+            query = urlencode({"root_id": root.id, "path": str(target_dir), "q": "cat", "folder_name_matched": "1"})
+            FileSearchHandler._handle_children(handler, urlparse(f"/children?{query}"))
+            body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(
+            [(item["type"], item["name"], item["is_match"]) for item in body["items"]],
+            [("file", "Cat_hit.pdf", True), ("file", "main.png", False)],
+        )
 
     def test_handle_children_rejects_outside_root(self):
         with tempfile.TemporaryDirectory() as tmp:

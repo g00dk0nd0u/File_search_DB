@@ -1280,7 +1280,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   };
 
-  const loadChildrenForDetail = async function (detailRow, folderPath, rootId, selectedChildPath) {
+  const loadChildrenForDetail = async function (detailRow, folderPath, rootId, selectedChildPath, folderNameMatched) {
     const panel = detailRow ? detailRow.querySelector("[data-child-panel]") : null;
     const previewPanel = detailRow ? detailRow.querySelector("[data-preview-panel]") : null;
     if (!detailRow || !rootId || !folderPath || !panel) {
@@ -1301,6 +1301,9 @@ document.addEventListener("DOMContentLoaded", function () {
     const currentSearchQuery = document.getElementById("q");
     if (currentSearchQuery && currentSearchQuery.value.trim()) {
       query.set("q", currentSearchQuery.value.trim());
+    }
+    if (folderNameMatched) {
+      query.set("folder_name_matched", "1");
     }
     try {
       const response = await fetch("/children?" + query.toString(), { method: "GET", cache: "no-store" });
@@ -1470,7 +1473,13 @@ document.addEventListener("DOMContentLoaded", function () {
       return;
     }
     setFolderExpandedState(folderPath, true);
-    await loadChildrenForDetail(detailRow, folderPath, rootId, readUiState().selectedChildByFolder[folderPath] || "");
+    await loadChildrenForDetail(
+      detailRow,
+      folderPath,
+      rootId,
+      readUiState().selectedChildByFolder[folderPath] || "",
+      toggleLink.getAttribute("data-folder-name-matched") === "1"
+    );
   });
 
   const restoreUiState = async function () {
@@ -1488,7 +1497,13 @@ document.addEventListener("DOMContentLoaded", function () {
       toggleLink.setAttribute("data-expanded", "true");
       detailRow.hidden = false;
       const rootId = toggleLink.getAttribute("data-root-id") || "";
-      await loadChildrenForDetail(detailRow, folderPath, rootId, state.selectedChildByFolder[folderPath] || "");
+      await loadChildrenForDetail(
+        detailRow,
+        folderPath,
+        rootId,
+        state.selectedChildByFolder[folderPath] || "",
+        toggleLink.getAttribute("data-folder-name-matched") === "1"
+      );
     }
   };
 
@@ -1995,7 +2010,8 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.FORBIDDEN, {"path": str(target_path), "items": [], "error": "Path is outside root"})
                 return
 
-            items = self._collect_children_items(target_path, query)
+            folder_name_matched = params.get("folder_name_matched", [""])[0].strip() == "1"
+            items = self._collect_children_items(target_path, query, folder_name_matched=folder_name_matched)
             self._send_json(HTTPStatus.OK, {"path": str(target_path), "items": items, "error": None})
         except OSError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"path": path_value, "items": [], "error": "Path cannot be resolved"})
@@ -2248,7 +2264,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
         return any(all(term.casefold() in value for term in group) for group in parsed_query.positive_groups)
 
     @staticmethod
-    def _collect_children_items(folder_path: Path, query: str = ""):
+    def _collect_children_items(folder_path: Path, query: str = "", folder_name_matched: bool = False):
         typed_items = []
         has_query = bool(query.strip())
         try:
@@ -2268,7 +2284,8 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                 continue
             display_name = entry.name
             is_match = FileSearchHandler._query_matches_text(entry.name, query)
-            if has_query and not is_match:
+            show_non_matching_file = folder_name_matched and item_type == "file"
+            if has_query and not is_match and not show_non_matching_file:
                 continue
             if item_type == "dir":
                 if has_query:
@@ -2276,7 +2293,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                 else:
                     display_html = "/" + html.escape(display_name)
             else:
-                if has_query:
+                if has_query and is_match:
                     display_html = FileSearchHandler._highlight_text(display_name, query)
                 else:
                     display_html = html.escape(display_name)
@@ -2460,7 +2477,7 @@ class FileSearchHandler(BaseHTTPRequestHandler):
                 f"<tr data-row-path='{row_path}' data-root-id='{row.root_id}'>"
                 "<td>"
                 f"<div class='folder-cell' data-drop-folder-path='{row_path}'>"
-                f"<a class='folder-name' data-expand-toggle='1' data-expanded='false' data-root-id='{row.root_id}' data-expand-path='{row_path}' href='#'>{folder_label}</a>"
+                f"<a class='folder-name' data-expand-toggle='1' data-expanded='false' data-root-id='{row.root_id}' data-expand-path='{row_path}' data-folder-name-matched='{'1' if getattr(row, 'folder_name_matched', False) else '0'}' href='#'>{folder_label}</a>"
                 f"{file_match_badge}"
                 f"<button type='button' class='folder-open-button' data-open-folder-path='{row_path}' aria-label='{open_label}' title='Open folder'></button>"
                 "</div>"
