@@ -971,7 +971,7 @@ html[data-theme="dark"] .result-table tr[data-row-path]:has(.folder-name[data-ex
   gap: 0.28rem;
   min-width: 0;
 }
-mark {
+　　　　mark {
   background: var(--mark-bg);
   color: var(--mark-text);
   border-radius: 4px;
