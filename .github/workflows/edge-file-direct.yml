@@ -1,0 +1,62 @@
+name: Windows Edge file direct-open
+
+on:
+  pull_request:
+    branches: [main3]
+    paths:
+      - "html/**"
+      - ".github/workflows/edge-file-direct.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edge-file-direct-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  edge-file-direct:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      EDGE_CI_DEPS: ${{ runner.temp }}\edge-ci-deps
+      EDGE_CI_ARTIFACTS: ${{ runner.temp }}\edge-ci-artifacts
+      EDGE_CI_PROFILE: ${{ runner.temp }}\edge-ci-profile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Prepare evidence directory
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force $env:EDGE_CI_ARTIFACTS
+      - name: Install CI driver only (no browser download)
+        shell: pwsh
+        run: |
+          npm install --prefix "$env:EDGE_CI_DEPS" --no-save --package-lock=false playwright-core@1.62.1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test installed Edge with file URLs and process restart
+        shell: pwsh
+        env:
+          DEBUG: pw:browser
+        run: |
+          node html/tests/edge-file-ci.cjs 2>&1 | Tee-Object -FilePath "$env:EDGE_CI_ARTIFACTS\driver.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Existing logic, parity and Python regression tests
+        shell: pwsh
+        run: |
+          node html/tests/run-core.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s html/tests -p 'test_*.py' -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Save logs, report and screenshots (including failures)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-edge-file-direct-${{ github.run_attempt }}
+          path: ${{ env.EDGE_CI_ARTIFACTS }}
+          if-no-files-found: warn
+          retention-days: 14

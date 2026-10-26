@@ -65,7 +65,7 @@ python -m unittest discover -s html/tests -p 'test_*.py' -v
 python -m unittest discover -s tests -v
 ```
 
-現環境の結果（2026-10-26）:
+初回開発環境の結果（2026-10-26、Windows CI追加前）:
 
 | 検証 | 結果 |
 |---|---|
@@ -78,6 +78,21 @@ python -m unittest discover -s tests -v
 | Linux Chromium代替実行 | `file://` が `ERR_BLOCKED_BY_ADMINISTRATOR` で失敗。フォルダAPIも管理ポリシーで禁止。ポリシー回避はしていない |
 
 接続Browserプラグインの操作ツールも利用できませんでした。画面検証スキルに従いPlaywrightで代替起動を試した結果が上記です。サーバー上で成功したものを `file://` 成功に読み替える検証は行っていません。
+
+## Windows Edge直接起動CI
+
+`.github/workflows/edge-file-direct.yml` が `main3` 向けPRのHTML変更時に `windows-latest` で実行されます。`html/tests/edge-file-ci.cjs` がプリインストール済み `msedge.exe` を実際に起動します。Playwright CoreはCIの一時領域にだけインストールし、ブラウザのダウンロード・アプリへの依存追加は行いません。
+
+- `index.html` と `tests/browser.html` を実際の `file:///...` URLで読み込み、タイトル、HTML・相対CSS/JSの読み込み、初期化完了、例外/console error/リソース失敗、`isSecureContext`、ネイティブ `showDirectoryPicker` の存在を確認します。
+- Settingsと検索画面の初期表示・往復操作、アプリの検索語とテーマの保存を確認します。
+- 実IndexedDBへ書き込み・読み戻し後、Edgeを正常終了。CDPで観測したブラウザ/renderer/utilityプロセスの終了をWindowsで確認し、同じ一時プロファイルで新しいEdgeを起動して保存値・設定とブラウザテストのマーカーを復元します。
+- 既存 `browser-tests.js` のボタンを実際にクリックします。28共有ロジック項目のフォルダハンドル・権限・走査は模擬データです。同じページの保存/再読込/ロールバック/削除7項目は実IndexedDBを使います。レポートでも区別します。
+- localhostやHTTPサーバー、通信の差し替え、APIモックの注入、権限の自動付与は使いません。Playwrightの既定起動引数を全て外し、Edgeにはプロファイル、制御用パイプ、初回案内の抑止、空白ページだけを指定します。セキュリティ機能を緩める引数は渡しません。
+- 成否と詳細はActionsのサマリーおよび `windows-edge-file-direct-<attempt>` artifactに保存します。`report.json`、`driver.log`、ページログ、スクリーンショットとHTMLを含み、テスト失敗時もアップロードします。起動そのものに失敗した場合は画面を取得できないためログで確認します。
+
+**CIのWindows Edge成功はユーザー実機の受入完了を意味しません。** フォルダ選択ダイアログ、実フォルダへの許可・再許可、実ハンドル保存/復元、実フォルダの走査、PDF/画像プレビュー、IME、大量ファイル、ユーザーのプロファイルと組織ポリシーは手動受入として残ります。APIの存在確認はダイアログや走査の成功判定に使用しません。
+
+CI結果はPR #3・Issue #2に実行URL付きで記録します。Draftは維持します。
 
 ## Windows Edgeの必須受入手順（未実施）
 
