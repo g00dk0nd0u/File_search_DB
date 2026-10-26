@@ -310,6 +310,10 @@ async function storage(page, label, restart) {
       const expected = restart
         ? markers[label.includes("app") ? "app" : "browser-tests"]
         : { token: randomUUID(), japanese: "永続化", numbers: [1, 2, 3] };
+      assert(
+        expected && typeof expected.token === "string",
+        "A successful pre-restart write is required",
+      );
       const actual = await page.evaluate(
         async ({ restart, expected, name }) => {
           // Real application wrapper + native IndexedDB. No API mocks or handles.
@@ -341,6 +345,10 @@ async function browserMarkerAfterRestart(page, label) {
     `${label}: browser-tests restart marker restored without rerunning tests`,
     "real Edge IndexedDB",
     async () => {
+      assert(
+        markers.browser?.time,
+        "The initial browser test must have saved its marker",
+      );
       const value = await page.evaluate(async () => {
         const db = await FolderStore.open("file-search-html-tests-v1");
         try {
@@ -368,15 +376,26 @@ async function appUIForRestart(page, label) {
       await page.locator("#query").fill("CI 永続化");
       if ((await page.locator("html").getAttribute("data-theme")) !== "dark")
         await page.locator("#search-view .theme").click();
-      await page.waitForFunction(async () => {
-        const db = await FolderStore.open();
-        try {
-          const v = await db.get("settings", "ui");
-          return v?.query === "CI 永続化" && v?.theme === "dark";
-        } finally {
-          db.close();
-        }
-      });
+      // waitForFunction polls synchronously; an async predicate is a truthy
+      // Promise even when its eventual value is false. Poll the actual completed
+      // IndexedDB transaction from Node and assert its value before closing Edge.
+      const deadline = Date.now() + 10000;
+      let stored;
+      do {
+        stored = await page.evaluate(async () => {
+          const db = await FolderStore.open();
+          try {
+            return await db.get("settings", "ui");
+          } finally {
+            db.close();
+          }
+        });
+        if (stored?.query === "CI 永続化" && stored?.theme === "dark") break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      } while (Date.now() < deadline);
+      assert.equal(stored?.query, "CI 永続化");
+      assert.equal(stored?.theme, "dark");
+      return stored;
     },
     page,
   );
