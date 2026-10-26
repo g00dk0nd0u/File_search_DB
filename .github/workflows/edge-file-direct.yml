@@ -19,10 +19,6 @@ jobs:
   edge-file-direct:
     runs-on: windows-latest
     timeout-minutes: 15
-    env:
-      EDGE_CI_DEPS: ${{ runner.temp }}\edge-ci-deps
-      EDGE_CI_ARTIFACTS: ${{ runner.temp }}\edge-ci-artifacts
-      EDGE_CI_PROFILE: ${{ runner.temp }}\edge-ci-profile
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,7 +26,12 @@ jobs:
           node-version: "22"
       - name: Prepare evidence directory
         shell: pwsh
-        run: New-Item -ItemType Directory -Force $env:EDGE_CI_ARTIFACTS
+        run: |
+          $artifactDir = Join-Path $env:RUNNER_TEMP 'edge-ci-artifacts'
+          New-Item -ItemType Directory -Force $artifactDir
+          "EDGE_CI_ARTIFACTS=$artifactDir" >> $env:GITHUB_ENV
+          "EDGE_CI_DEPS=$(Join-Path $env:RUNNER_TEMP 'edge-ci-deps')" >> $env:GITHUB_ENV
+          "EDGE_CI_PROFILE=$(Join-Path $env:RUNNER_TEMP 'edge-ci-profile')" >> $env:GITHUB_ENV
       - name: Install CI driver only (no browser download)
         shell: pwsh
         run: |
