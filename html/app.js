@@ -11,6 +11,7 @@
     generation = 0,
     loadGeneration = 0,
     busy = false,
+    loading = false,
     controller;
   let ui = {
     query: "",
@@ -20,6 +21,43 @@
     selected: {},
   };
   const urls = new Map();
+  // A failed automatic attempt is retried only by explicit user action.
+  const attempted = new Set(),
+    scans = new Map(),
+    blocked = new Set();
+  const accessError = (e) => ["NotAllowedError", "SecurityError"].includes(e.name);
+  async function readable(root) {
+    try {
+      return await FS.permission(root.handle);
+    } catch (_) {
+      return false;
+    }
+  }
+  function hideDenied(root) {
+    blocked.add(root.id);
+    if (activeId !== root.id) return;
+    ++generation;
+    snapshot = undefined;
+    clearPreviews();
+    $("results").replaceChildren();
+    $("meta").textContent =
+      "Read access required. Open Settings → Allow access / Reselect.";
+  }
+  async function stopScan(root) {
+    const task = scans.get(root.id);
+    if (task) {
+      task.controller.abort();
+      await task.promise;
+    }
+  }
+  async function recover(root) {
+    blocked.delete(root.id);
+    attempted.delete(root.id);
+    if (activeId === root.id) await loadActive();
+  }
+  function autoRefresh(root) {
+    if (!attempted.has(root.id) && !blocked.has(root.id)) refresh(root);
+  }
   const element = (tag, text, cls) => {
     const e = document.createElement(tag);
     if (text !== undefined) e.textContent = text;
@@ -153,10 +191,17 @@
         [
           "Allow access",
           async () => {
-            if (!(await FS.permission(root.handle, true)))
-              throw Error(
-                "Read permission denied. Allow folder access in Edge and try again.",
-              );
+            try {
+              if (!(await FS.permission(root.handle, true))) {
+                hideDenied(root);
+                return;
+              }
+            } catch (e) {
+              hideDenied(root);
+              throw e;
+            }
+            await stopScan(root);
+            await recover(root);
             notice("Read access granted");
           },
           "secondary",
@@ -171,6 +216,7 @@
               )
             )
               return;
+            await stopScan(root);
             await db.remove(root.id);
             roots = roots.filter((r) => r.id !== root.id);
             if (activeId === root.id) {
@@ -217,51 +263,111 @@
   }
   async function loadActive() {
     const version = ++loadGeneration;
+    loading = true;
     ++generation;
     snapshot = undefined;
     clearPreviews();
     $("results").replaceChildren();
+    $("meta").textContent = "";
     renderRoots();
     ui.rootId = activeId;
     saveUI();
-    const value = activeId ? await db.get("snapshots", activeId) : undefined;
+    const root = activeRoot();
+    if (!root) {
+      loading = false;
+      await showResults();
+      return;
+    }
+    const allowed = await readable(root);
     if (version !== loadGeneration) return;
+    if (!allowed || blocked.has(root.id)) {
+      loading = false;
+      hideDenied(root);
+      return;
+    }
+    const value = await db.get("snapshots", root.id);
+    if (version !== loadGeneration) return;
+    loading = false;
     snapshot = value;
     await showResults();
   }
+  function refresh(root, manual = false) {
+    // Register the task before yielding, including permission checks and commit.
+    if (scans.has(root.id)) return scans.get(root.id).promise;
+    attempted.add(root.id);
+    const task = { controller: new AbortController() };
+    scans.set(root.id, task);
+    task.promise = (async () => {
+      await Promise.resolve();
+      try {
+        if (!(await readable(root))) {
+          hideDenied(root);
+          return;
+        }
+        if (manual) {
+          controller = task.controller;
+          $("progress-wrap").hidden = false;
+        }
+        const next = await FS.scan(root.handle, {
+          signal: task.controller.signal,
+          progress: manual
+            ? (p) => {
+                $("progress").textContent =
+                  `${root.displayName}: ${p.folders} folders · ${p.files} files`;
+              }
+            : undefined,
+        });
+        if (task.controller.signal.aborted)
+          throw new DOMException("Scan cancelled", "AbortError");
+        if (!(await readable(root))) {
+          hideDenied(root);
+          return;
+        }
+        const current = roots.find((r) => r.id === root.id);
+        if (!current || task.controller.signal.aborted) return;
+        const updated = {
+          ...current,
+          lastScanned: new Date().toISOString(),
+          folderCount: next.folders.length - 1,
+          fileCount: next.files.length,
+        };
+        await db.commit(updated, next);
+        roots = roots.map((r) => (r.id === root.id ? updated : r));
+        renderRoots();
+        if (activeId === root.id) {
+          // Invalidate a pending load of the old snapshot, keep expansion/selection.
+          ++loadGeneration;
+          loading = false;
+          snapshot = next;
+          await showResults();
+          if (manual) notice("Reload complete");
+        }
+      } catch (e) {
+        if (accessError(e) || !(await readable(root))) hideDenied(root);
+        else if (activeId === root.id) fail(e);
+      } finally {
+        scans.delete(root.id);
+      }
+    })();
+    return task.promise;
+  }
   async function reload(root) {
-    // Called directly by a user gesture, before any storage work.
-    if (!(await FS.permission(root.handle, true)))
-      throw Error(
-        "Read permission denied. Use Allow access or Reselect; the previous index is still searchable.",
-      );
-    controller = new AbortController();
-    $("progress-wrap").hidden = false;
-    const next = await FS.scan(root.handle, {
-      signal: controller.signal,
-      progress: (p) => {
-        $("progress").textContent =
-          `${root.displayName}: ${p.folders} folders · ${p.files} files`;
-      },
-    });
-    if (controller.signal.aborted)
-      throw new DOMException("Scan cancelled", "AbortError");
-    const updated = {
-      ...root,
-      lastScanned: new Date().toISOString(),
-      folderCount: next.folders.length - 1,
-      fileCount: next.files.length,
-    };
-    await db.commit(updated, next);
-    roots = roots.map((r) => (r.id === root.id ? updated : r));
-    if (activeId === root.id) {
-      ui.expanded = [];
-      ui.selected = {};
-      await loadActive();
+    if (scans.has(root.id)) {
+      controller = scans.get(root.id).controller;
+      return scans.get(root.id).promise;
     }
-    notice(
-      `Reload complete: ${updated.folderCount} folders · ${updated.fileCount} files`,
-    );
+    // Only this explicit user gesture may request permission.
+    try {
+      if (!(await FS.permission(root.handle, true))) {
+        hideDenied(root);
+        return;
+      }
+    } catch (e) {
+      hideDenied(root);
+      throw e;
+    }
+    blocked.delete(root.id);
+    await refresh(root, true);
   }
   async function reselect(root) {
     const handle = await window.showDirectoryPicker({ mode: "read" });
@@ -269,10 +375,12 @@
       throw Error(
         "Choose the same registered folder. Add a different folder with Add Directory.",
       );
+    await stopScan(root);
     const updated = { ...root, handle };
     await db.put("roots", root.id, updated);
     roots = roots.map((r) => (r.id === root.id ? updated : r));
-    notice("Folder handle reconnected. Use Reload to refresh the index.");
+    await recover(updated);
+    notice("Folder handle reconnected.");
   }
   $("cancel").onclick = () => controller?.abort();
   $("add").onclick = () =>
@@ -305,7 +413,6 @@
       ui.expanded = [];
       ui.selected = {};
       await loadActive();
-      await reload(root);
     });
   $("root").onchange = () => {
     activeId = $("root").value;
@@ -329,6 +436,8 @@
   };
   $("query").oninput = () => {
     clearTimeout(searchTimer);
+    ++generation;
+    ui.query = $("query").value;
     if (!composing) searchTimer = setTimeout(submitSearch, 250);
   };
   $("query").oncompositionstart = () => {
@@ -376,8 +485,10 @@
     }
     paneMessage(pane, "Loading…");
     try {
-      if (!(await FS.permission(root.handle, true)))
-        throw Error("Read permission denied. Use Settings → Allow access.");
+      if (!(await readable(root))) {
+        hideDenied(root);
+        return;
+      }
       const file = await FS.fileAt(root.handle, item.path);
       if (!pane.isConnected || pane._request !== token) return;
       const ext = file.name.split(".").at(-1).toLowerCase();
@@ -455,6 +566,7 @@
         }
       }
     } catch (e) {
+      if (accessError(e) || !(await readable(root))) hideDenied(root);
       if (pane.isConnected && pane._request === token)
         paneMessage(
           pane,
@@ -506,8 +618,17 @@
         "No search target folders. Open Settings → Add Directory.";
       return;
     }
+    $("meta").textContent = "";
+    if (loading) return;
+    const allowed = await readable(root);
+    if (version !== generation) return;
+    if (!allowed || blocked.has(root.id)) {
+      hideDenied(root);
+      return;
+    }
     if (!localSnapshot) {
-      $("meta").textContent = "No saved index. Open Settings → Reload.";
+      $("meta").textContent = "No saved index. Open Settings → Reload if needed.";
+      autoRefresh(root);
       return;
     }
     $("meta").textContent = "Searching…";
@@ -517,7 +638,12 @@
       100,
       () => version !== generation,
     );
+    const stillAllowed = await readable(root);
     if (version !== generation) return;
+    if (!stillAllowed || blocked.has(root.id)) {
+      hideDenied(root);
+      return;
+    }
     $("meta").textContent = queryText.trim()
       ? `${rows.length} folders${rows.length === 100 ? " (maximum 100 shown)" : ""} · ${root.displayName}`
       : "Enter a keyword to search.";
@@ -593,6 +719,7 @@
       toggle.onclick = expand;
       if (ui.expanded.includes(row.path)) expand();
     }
+    autoRefresh(root);
   }
   window.addEventListener("pagehide", clearPreviews);
   try {
@@ -612,7 +739,7 @@
     $("support").textContent =
       window.showDirectoryPicker && window.isSecureContext
         ? "Local HTML edition · read-only folder access · index stored in this Edge profile"
-        : "Folder selection is unavailable. Open this file in Windows Edge and check browser policies. Saved indexes can still be searched.";
+        : "Folder selection is unavailable. Open this file in Windows Edge and check browser policies. Read access is required to search saved indexes.";
     $("storage-info").textContent =
       "Absolute paths are not exposed by the browser. Keep this HTML folder in the same location and use the same Edge profile. Clearing browser data deletes this index.";
     await loadActive();

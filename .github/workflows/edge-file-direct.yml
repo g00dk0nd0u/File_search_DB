@@ -47,6 +47,8 @@ jobs:
       - name: Existing logic, parity and Python regression tests
         shell: pwsh
         run: |
+          node html/tests/app-tests.cjs 2>&1 | Tee-Object -FilePath "$env:EDGE_CI_ARTIFACTS\app-integration.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node html/tests/run-core.cjs 2>&1 | Tee-Object -FilePath "$env:EDGE_CI_ARTIFACTS\regression.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s html/tests -p 'test_*.py' -v 2>&1 | Tee-Object -FilePath "$env:EDGE_CI_ARTIFACTS\regression.log" -Append
