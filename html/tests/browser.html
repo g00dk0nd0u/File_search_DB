@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src blob:; frame-src blob:; connect-src 'none'; object-src 'none'; base-uri 'none'"
+    />
+    <title>Folder Search — direct-open verification</title>
+    <link rel="stylesheet" href="../styles.css" />
+    <script defer src="../search.js"></script>
+    <script defer src="../filesystem.js"></script>
+    <script defer src="../storage.js"></script>
+    <script defer src="core-tests.js"></script>
+    <script defer src="browser-tests.js"></script>
+  </head>
+  <body>
+    <main>
+      <h1>Direct-open verification (Phase 0 / 4)</h1>
+      <p>
+        Open this page directly in Windows Edge. This test page uses its own
+        IndexedDB database and never writes to selected files. Record the Edge
+        version, OS, URL and each result. Automated tests do not prove the
+        native PDF viewer works.
+      </p>
+      <div class="toolbar">
+        <button id="core">Run logic + IndexedDB tests</button
+        ><button id="pick">Select test directory and scan</button
+        ><button id="allow">Reauthorize saved handle</button
+        ><button id="restore">Check saved data</button>
+      </div>
+      <p>
+        After a successful directory scan, fully close Edge, reopen this same
+        page and click Check saved data, then Reauthorize saved handle. Include
+        PDF, PNG and UTF-8 / CP932 text files in the test directory. Click their
+        buttons below and visually confirm their previews.
+      </p>
+      <pre id="log" aria-live="polite"></pre>
+      <div id="files" class="children"></div>
+      <div id="preview" class="preview"></div>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,65 @@
+name: Windows Edge file direct-open
+
+on:
+  pull_request:
+    branches: [main3]
+    paths:
+      - "html/**"
+      - ".github/workflows/edge-file-direct.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edge-file-direct-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  edge-file-direct:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Prepare evidence directory
+        shell: pwsh
+        run: |
+          $artifactDir = Join-Path $env:RUNNER_TEMP 'edge-ci-artifacts'
+          New-Item -ItemType Directory -Force $artifactDir
+          "EDGE_CI_ARTIFACTS=$artifactDir" >> $env:GITHUB_ENV
+          "EDGE_CI_DEPS=$(Join-Path $env:RUNNER_TEMP 'edge-ci-deps')" >> $env:GITHUB_ENV
+          "EDGE_CI_PROFILE=$(Join-Path $env:RUNNER_TEMP 'edge-ci-profile')" >> $env:GITHUB_ENV
+      - name: Install CI driver only (no browser download)
+        shell: pwsh
+        run: |
+          npm install --prefix "$env:EDGE_CI_DEPS" --no-save --package-lock=false playwright-core@1.62.1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test installed Edge with file URLs and process restart
+        shell: pwsh
+        env:
+          DEBUG: pw:browser
+        run: |
+          node html/tests/edge-file-ci.cjs 2>&1 | Tee-Object -FilePath "$env:EDGE_CI_ARTIFACTS\driver.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Existing logic, parity and Python regression tests
+        shell: pwsh
+        run: |
+          node html/tests/app-tests.cjs 2>&1 | Tee-Object -FilePath "$env:EDGE_CI_ARTIFACTS\app-integration.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node html/tests/run-core.cjs 2>&1 | Tee-Object -FilePath "$env:EDGE_CI_ARTIFACTS\regression.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s html/tests -p 'test_*.py' -v 2>&1 | Tee-Object -FilePath "$env:EDGE_CI_ARTIFACTS\regression.log" -Append
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -v 2>&1 | Tee-Object -FilePath "$env:EDGE_CI_ARTIFACTS\regression.log" -Append
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Save logs, report and screenshots (including failures)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-edge-file-direct-${{ github.run_attempt }}
+          path: ${{ env.EDGE_CI_ARTIFACTS }}
+          if-no-files-found: warn
+          retention-days: 14
