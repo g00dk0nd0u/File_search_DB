@@ -8,6 +8,7 @@ from pathlib import Path
 import platform
 import subprocess
 import time
+import urllib.error
 import urllib.request
 import uuid
 
@@ -36,8 +37,13 @@ def request(method, route, payload=None):
         "http://127.0.0.1:4444" + route, data=data, method=method,
         headers={"Content-Type": "application/json"},
     )
-    with OPENER.open(req, timeout=45) as response:
-        result = json.load(response)["value"]
+    REPORT["last_command"] = {"method": method, "route": route}
+    try:
+        with OPENER.open(req, timeout=45) as response:
+            result = json.load(response)["value"]
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")
+        raise RuntimeError(method + " " + route + " HTTP " + str(error.code) + ": " + detail) from error
     if isinstance(result, dict) and "error" in result:
         raise RuntimeError(str(result))
     return result
@@ -60,7 +66,7 @@ def open_safari():
     result = request("POST", "/session", {"capabilities": {"alwaysMatch": {"browserName": "safari"}}})
     SESSION = result["sessionId"]
     REPORT.setdefault("capabilities", []).append(result["capabilities"])
-    request("POST", "/session/" + SESSION + "/timeouts", {"script": 20000})
+    request("POST", "/session/" + SESSION + "/timeouts", {"script": 20000, "pageLoad": 20000, "implicit": 0})
     return navigate()
 
 

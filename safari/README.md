@@ -118,7 +118,15 @@ CIの保存データは明示的に合成メタデータと記録します。
   が存在し、ジョブは0件だった。
   ジョブ設定での `runner.temp` 参照をやめ、最初のステップで `RUNNER_TEMP` と
   `GITHUB_ENV` から証跡ディレクトリを設定する形へ修正した。
-  修正後CIの結果はPR・Issueに追記し、実行成功と推定しない。
+  さらに、[修正直後のCI](https://github.com/g00dk0nd0u/File_search_DB/actions/runs/40345168456)
+  は緑表示でも、SafariドライバーがHTTP 500で停止していた。
+  既定シェルのパイプラインが `tee` の終了値を返して失敗を隠していたため、
+  `shell: bash` を明示し `-eo pipefail` を有効にした。
+  WebDriverの失敗応答本文とコマンドも記録する。
+  このCIで確認できた成功は模擬テスト12件とPython回帰55件のみ。
+  Safari 26.6.1 / macOS 15.7.9のセッション作成までは観測したが、
+  file://起動・IndexedDB・再起動保存の成功は未確認。
+  以降のCI結果はPR・Issueに追記し、緑表示だけで成功と推定しない。
 
 ### 次段階（Phase 0受入後）
 

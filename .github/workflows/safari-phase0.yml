@@ -19,6 +19,9 @@ jobs:
   safari-phase0:
     runs-on: macos-15
     timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - name: Prepare evidence directory
