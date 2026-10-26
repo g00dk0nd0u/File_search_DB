@@ -43,7 +43,7 @@ async function app(roots, options={}) {
     async commit(root,value){state.commits++; if(state.failSave) throw new DOMException("Full", "QuotaExceededError"); stored.set(root.id,value);},
     async remove(id){stored.delete(id);}};
   const context = {document:{getElementById:$,createElement:tag=>new Element(tag),createTextNode:t=>new Element("text",t),querySelectorAll:()=>[],documentElement:{dataset:{}}},
-    FolderSearch:Search,FolderFS:options.fileAt ? {...FS, fileAt:options.fileAt} : FS,FolderStore:{open:async()=>db},Option:class extends Element {constructor(t,v){super("option",t);this.value=v;}},
+    FolderSearch:options.search || Search,FolderFS:options.fileAt ? {...FS, fileAt:options.fileAt} : FS,FolderStore:{open:async()=>db},Option:class extends Element {constructor(t,v){super("option",t);this.value=v;}},
     URL,AbortController,DOMException,crypto:require("node:crypto").webcrypto,setTimeout,clearTimeout,confirm:()=>true};
   context.window={indexedDB:{},isSecureContext:true,showDirectoryPicker:async()=>roots[0].handle,addEventListener:()=>{}};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,"../app.js"),"utf8"),context);
@@ -214,6 +214,14 @@ async function test(name,fn){await fn();console.log("PASS "+name);count++;}
     cls(x.$("results"),"more-items").find(n=>!n.hidden).onclick();
     assert(cls(x.$("results"),"item").length>before);
     assert(cls(x.$("results"),"item").length<=before+100);
+  });
+  await test("permission revoked while building child index hides results without auto prompt",async()=>{
+    const a=fixture("A");let yields=0;
+    const x=await app([a],{snapshot:snap("A",Array.from({length:600},(_,i)=>`file${i}.txt`)),
+      ui:{query:"A"},search:{...Search,pause:async()=>{yields++;a.state.permission="denied";}}});
+    await until(()=>x.$("meta").textContent.includes("Read access"));
+    assert(yields>0);assert.equal(x.$("results").children.length,0);
+    assert.equal(a.state.scans,0);assert.equal(a.state.requests,0);assert(x.stored.has("A"));
   });
   await test("expanded nested file buttons still select PDF/image/text previews; collapse cancels pane",async()=>{
     const a=fixture("A"),snapshot=treeSnapshot();

@@ -739,6 +739,14 @@
     for (const items of children.values()) items.sort((a, b) =>
       (a.kind === b.kind ? 0 : a.kind === "directory" ? -1 : 1) ||
       S.compare(S.fold(a.name), S.fold(b.name)));
+    // Building the child index yields too: permissions/root/query may have
+    // changed since the check after search. Never publish stale/denied results.
+    const renderAllowed = await readable(root);
+    if (version !== generation) return;
+    if (!renderAllowed || blocked.has(root.id)) {
+      hideDenied(root);
+      return;
+    }
     const query = S.parse(queryText);
     for (const row of rows) {
       const article = element("article", undefined, "result"),
