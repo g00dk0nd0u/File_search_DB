@@ -19,10 +19,11 @@
 <button id="settings-button" type="button" class="secondary" disabled>Settings</button>
 </form>
 <p id="meta" role="status">登録情報を読み込んでいます…</p>
-<div class="workspace"><div id="results" aria-label="検索結果"></div><aside aria-label="プレビュー"><h2 id="preview-title">Preview</h2><div id="preview"><p class="hint">ファイルを選択してください。</p></div></aside></div>
+<div class="workspace"><aside aria-label="プレビュー"><h2 id="preview-title">Preview</h2><div id="preview"><p class="hint">ファイルを選択してください。</p></div></aside><div id="results" role="region" aria-label="検索結果"></div></div>
 </section>
 <section id="settings-view" aria-label="Folder Manager" hidden>
 <div class="toolbar"><h1>Settings</h1><button id="add" disabled>Add Directory</button><button id="back" class="secondary">Back to Search</button></div>
+<p class="theme-setting"><button id="theme-toggle" type="button" class="secondary" aria-pressed="false">Dark Mode</button> <span id="theme-status" role="status">Light</span></p>
 <p class="hint">登録先への再選択は、選んだフォルダでその登録を置き換えます。同名でも同じ実体とは確認できません。登録削除で実ファイルは削除されません。</p>
 <div class="table-scroll"><table><thead><tr><th>Display Name</th><th>選択フォルダ名（絶対パス取得不可）</th><th>Status</th><th>Actions</th></tr></thead><tbody id="roots"></tbody></table></div>
 </section>
