@@ -18,7 +18,6 @@
     <main>
       <section id="search-view" aria-label="Folder Search">
         <form id="search-form" class="toolbar">
-          <label class="target-label" for="root">Search Target</label>
           <select id="root" aria-label="Search Target" disabled></select>
           <div class="query-group">
             <input
@@ -28,28 +27,23 @@
               autocomplete="off"
             /><button id="search" type="submit" disabled>Search</button>
           </div>
-          <button
-            class="secondary theme"
-            type="button"
-            aria-label="Toggle theme"
-          >
-            ☾
-          </button>
           <button id="settings-button" class="secondary" type="button">
             Settings
           </button>
         </form>
-        <p class="hint">
-          AND: space · OR · -exclude · "exact phrase" — folder and file names
-          only
-        </p>
         <p id="meta" class="meta" aria-live="polite"></p>
-        <div id="results"></div>
+        <div class="workspace">
+          <aside class="preview-panel" aria-label="Preview">
+            <h1>Preview</h1>
+            <div id="preview" class="preview" aria-live="polite"></div>
+          </aside>
+          <div id="results" role="region" aria-label="Search results"></div>
+        </div>
       </section>
       <section id="settings-view" aria-label="Folder Manager" hidden>
         <div class="toolbar">
           <button id="add" disabled>Add Directory</button
-          ><button class="secondary theme" aria-label="Toggle theme">☾</button
+          ><button class="secondary theme" aria-label="Dark Mode" aria-pressed="false">Dark Mode</button
           ><button id="back" class="secondary">Back to Search</button>
         </div>
         <p class="hint">

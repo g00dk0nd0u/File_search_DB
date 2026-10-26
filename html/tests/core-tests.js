@@ -78,8 +78,8 @@
     );
     equal(
       S.children(fixture, "商品_cat", "cat", true).map((i) => i.name),
-      ["cat.pdf", "other.txt"],
-      "folder match shows all direct files",
+      ["cat.pdf"],
+      "folder match does not show unrelated files",
     );
     equal(
       S.children(fixture, "Other", "cat", false).map((i) => i.name),

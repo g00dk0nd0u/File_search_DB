@@ -5,12 +5,12 @@
 }
 :root {
   color-scheme: light;
-  --bg: #f5f7fa;
+  --bg: #f4f6f8;
   --surface: #fff;
   --muted: #64748b;
-  --text: #1e293b;
-  --border: #e2e8f0;
-  --accent: #2563eb;
+  --text: #202933;
+  --border: #d1dae1;
+  --accent: #236998;
   --soft: #f8fafc;
   --mark: #ffd596;
 }
@@ -30,7 +30,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font:
-    14px "Yu Gothic UI",
+    13.5px/1.48 "Yu Gothic UI",
     "Hiragino Sans",
     sans-serif;
 }
@@ -43,10 +43,10 @@ button,
 input,
 select {
   font: inherit;
-  min-height: 38px;
+  min-height: 34px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 7px 12px;
+  padding: 5px 10px;
 }
 input,
 select {
@@ -55,7 +55,7 @@ select {
 }
 button {
   cursor: pointer;
-  background: #2563eb;
+  background: #236998;
   color: #fff;
   font-weight: 600;
 }
@@ -90,9 +90,6 @@ button.link {
   gap: 9px;
   flex-wrap: wrap;
 }
-.target-label {
-  font-weight: 600;
-}
 select {
   max-width: 280px;
   min-width: 160px;
@@ -107,15 +104,10 @@ select {
   width: 100%;
   min-width: 100px;
 }
-.theme {
-  border-radius: 50%;
-  width: 38px;
-  padding: 0;
-}
 .hint,
 .meta {
   color: var(--muted);
-  line-height: 1.65;
+  line-height: 1.48;
 }
 .hint {
   font-size: 12px;
@@ -149,13 +141,13 @@ select {
   border: 1px solid var(--border);
   border-radius: 7px;
   background: var(--surface);
-  margin: 0 0 8px;
+  margin: 0 0 6px;
   overflow: hidden;
 }
 .result-header {
   display: flex;
   align-items: center;
-  padding: 5px 12px;
+  padding: 4px 8px;
   gap: 10px;
 }
 .folder-toggle {
@@ -171,18 +163,32 @@ select {
   color: var(--muted);
   white-space: nowrap;
 }
-.detail {
-  border-top: 1px solid var(--border);
+.workspace {
   display: grid;
-  grid-template-columns: minmax(240px, 38%) minmax(0, 1fr);
-  min-height: 230px;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  margin-top: 12px;
 }
-.children {
-  padding: 12px;
-  border-right: 1px solid var(--border);
-  max-height: 650px;
+#results { min-width: 0; }
+.preview-panel {
+  position: sticky;
+  top: 12px;
+  min-width: 0;
+  min-height: 270px;
+  max-height: calc(100vh - 24px);
   overflow: auto;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
 }
+.preview-panel h1 { font-size: 14px; margin: 0 0 10px; }
+.meta:empty, #support:empty { display: none; }
+.detail { border-top: 1px solid var(--border); }
+.children { padding: 8px; }
+.item { padding: 3px 4px; min-height: 0; }
+.folder-toggle { padding: 3px 2px; min-height: 0; }
 .item {
   display: block;
   width: 100%;
@@ -198,7 +204,7 @@ select {
   font-weight: 600;
 }
 .preview {
-  padding: 16px;
+  padding: 0;
   min-width: 0;
   overflow: auto;
 }
@@ -210,13 +216,13 @@ select {
 }
 .preview img {
   max-width: 100%;
-  max-height: 600px;
+  max-height: 640px;
   object-fit: contain;
   border: 1px solid var(--border);
 }
 .preview iframe {
   width: 100%;
-  height: 580px;
+  height: 620px;
   border: 1px solid var(--border);
   background: #fff;
 }
@@ -224,7 +230,7 @@ select {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   margin: 0;
-  line-height: 1.65;
+  line-height: 1.48;
   font-family: Consolas, monospace;
 }
 .empty {
@@ -248,7 +254,7 @@ th,
 td {
   text-align: left;
   border-bottom: 1px solid var(--border);
-  padding: 12px;
+  padding: 8px;
   vertical-align: top;
 }
 th {
@@ -278,14 +284,8 @@ td input {
   min-width: 160px;
 }
 @media (max-width: 750px) {
-  .detail {
-    grid-template-columns: 1fr;
-  }
-  .children {
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-    max-height: 280px;
-  }
+  .workspace { grid-template-columns: 1fr; }
+  .preview-panel { position: static; max-height: 70vh; }
   .toolbar {
     gap: 7px;
   }
@@ -300,11 +300,11 @@ td input {
     padding: 12px;
   }
   .preview iframe {
-    height: 430px;
+    height: 470px;
   }
 }
 
-.subfolder { display: grid; grid-template-columns: 28px minmax(0, 1fr); }
-.subfolder-items { grid-column: 2; border-left: 1px solid var(--border); padding-left: 8px; }
+.subfolder { display: grid; grid-template-columns: 22px minmax(0, 1fr); }
+.subfolder-items { grid-column: 2; border-left: 1px solid var(--border); padding-left: 5px; }
 .subfolder-items[hidden] { display: none; }
 .more-items { margin: 8px 0; }
