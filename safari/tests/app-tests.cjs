@@ -25,7 +25,7 @@ async function harness(records=[],search=S.search){
  const ids=Object.fromEntries(['search-view','settings-view','query','root','picker','preview','preview-title','results','roots','notice','meta','search','search-form','settings-button','back','add'].map(id=>[id,new Element()]));
  const all=()=>Object.values(ids).flatMap(e=>[e,...desc(e)]);
  const desc=e=>e.children.flatMap(c=>[c,...desc(c)]);
- const document={getElementById:id=>ids[id],createElement:tag=>new Element(tag),createDocumentFragment:()=>Object.assign(new Element(),{fragment:true}),
+ const document={getElementById:id=>ids[id],createElement:tag=>new Element(tag),createTextNode:text=>Object.assign(new Element("#text"),{textContent:text}),createDocumentFragment:()=>Object.assign(new Element(),{fragment:true}),
  querySelectorAll:()=>all().filter(e=>e.className==='file'&&e.getAttribute('aria-pressed')==='true')};
  const stored=new Map(records.map(r=>[r.id,structuredClone(r)])), events={};
  class Storage{
@@ -103,4 +103,86 @@ test('UI failed Add never falls back to old active results',async()=>{
  const h=await harness();await h.pick([file('A/old.txt')]);await h.query('old');
  const bad=file('B/bad.txt');bad.slice=()=>{throw Error('NotReadableError');};
  await h.pick([bad]);assert.equal(h.ids.results.children.length,0);assert.equal(h.ids.preview.children.length,0);assert.equal(h.stored.size,1);
+});
+
+const folders = h => h.desc(h.ids.results).filter(e=>e.tagName==='details');
+const marks = (h,e) => h.desc(e).filter(e=>e.tagName==='mark').map(e=>e.textContent);
+const namedFolder = (h,name) => folders(h).find(e=>e.children[0].textContent===name);
+const toggle = async (details,open) => {details.open=open;await details.emit('toggle');};
+const moreButton = h => h.desc(h.ids.results).find(e=>e.tagName==='button'&&e.textContent==='さらに表示');
+async function settle(h) {for(let i=0;i<20;i++){await new Promise(r=>setTimeout(r,1));await h.tick();}}
+
+test('result and nested folders open initially, files and nested highlights are immediately visible',async()=>{
+ const h=await harness();await h.pick([file('Root/友依子_仕事/友依子_子/深い階層/友依子_特記.txt'),file('Root/友依子_仕事/実施設計図一式.pdf')]);
+ await h.query('友依子');await settle(h);
+ assert.ok(folders(h).length>=3);assert.ok(folders(h).every(e=>e.open));
+ assert.ok(h.buttons().some(e=>e.textContent==='友依子_特記.txt'));
+ assert.deepEqual(marks(h,namedFolder(h,'友依子_仕事').children[0]),['友依子']);
+ assert.deepEqual(marks(h,namedFolder(h,'友依子_子').children[0]),['友依子']);
+ assert.deepEqual(marks(h,h.buttons().find(e=>e.textContent==='友依子_特記.txt')),['友依子']);
+ assert.deepEqual(marks(h,h.buttons().find(e=>e.textContent==='実施設計図一式.pdf')),[]);
+});
+test('manual collapse survives same-query redraw and reopens on changed query',async()=>{
+ const h=await harness();await h.pick([file('Root/alpha/alpha_child/file.txt')]);await h.query('alpha');
+ await toggle(namedFolder(h,'alpha_child'),false);await toggle(namedFolder(h,'alpha'),false);
+ await h.query('alpha');assert.equal(namedFolder(h,'alpha').open,false);
+ await toggle(namedFolder(h,'alpha'),true);await settle(h);assert.equal(namedFolder(h,'alpha_child').open,false);
+ await h.query('alpha OR file');await settle(h);assert.ok(folders(h).every(e=>e.open));
+});
+test('root switches keep collapse choices isolated for the same query',async()=>{
+ const h=await harness();await h.pick([file('A/alpha/one.txt')]);await h.pick([file('B/alpha/two.txt')]);
+ await h.query('alpha');await toggle(namedFolder(h,'alpha'),false);
+ h.ids.root.value='1';await h.ids.root.emit('change');await h.tick();assert.equal(namedFolder(h,'alpha').open,true);
+ h.ids.root.value='2';await h.ids.root.emit('change');await h.tick();assert.equal(namedFolder(h,'alpha').open,false);
+});
+test('IME preserves collapse during composition and resets expansion/highlights only on commit',async()=>{
+ const h=await harness();await h.pick([file('Root/日本語/日本語.txt')]);await h.query('日');await toggle(namedFolder(h,'日本語'),false);
+ await h.ids.query.emit('compositionstart');h.ids.query.value='日本';await h.ids.query.emit('input',{isComposing:true});
+ assert.equal(namedFolder(h,'日本語').open,false);assert.deepEqual(marks(h,namedFolder(h,'日本語').children[0]),['日']);
+ await h.ids['search-form'].emit('submit');assert.equal(namedFolder(h,'日本語').open,false);
+ await h.ids.query.emit('compositionend');await h.tick();assert.equal(namedFolder(h,'日本語').open,true);
+ assert.deepEqual(marks(h,namedFolder(h,'日本語').children[0]),['日本']);
+});
+test('AND OR exclusions and quoted phrases highlight only positive literal matches',async()=>{
+ const h=await harness();await h.pick([file('alpha beta gamma/ALPHA alpha beta gamma draft.pdf')]);
+ for(const [query,expected] of [['alpha beta',['ALPHA','alpha','beta']],['alpha OR gamma -draft',['ALPHA','alpha','gamma']],['"alpha beta"',['alpha beta']],['-draft',[]]]){
+  await h.query(query);assert.deepEqual(marks(h,h.buttons()[0]),expected);
+ }
+});
+test('Unicode casefold expansion maps marks back to complete original characters',async()=>{
+ const h=await harness();await h.pick([file('Straße İ Σ 𐐀/ß_İ_Σ_𐐀.txt')]);await h.query('ss OR i OR σ OR 𐐨');
+ assert.deepEqual(marks(h,h.buttons()[0]),['ß','İ','Σ','𐐀']);assert.equal(h.buttons()[0].textContent,'ß_İ_Σ_𐐀.txt');
+});
+test('overlapping and adjacent matches merge without changing original text',async()=>{
+ const h=await harness();await h.pick([file('ab bc cd/abcd_abcd.txt')]);await h.query('ab OR bc OR cd');
+ assert.deepEqual(marks(h,h.buttons()[0]),['abcd','abcd']);assert.equal(h.buttons()[0].textContent,'abcd_abcd.txt');
+});
+test('names containing HTML are rendered as literal text nodes and mark elements',async()=>{
+ const h=await harness();await h.pick([file('alpha beta/<img onerror=x>alpha beta.txt')]);await h.query('"alpha beta"');
+ const button=h.buttons()[0];assert.equal(button.textContent,'<img onerror=x>alpha beta.txt');
+ assert.deepEqual(button.children.map(e=>e.tagName),['#text','mark','#text']);
+ assert.deepEqual(marks(h,button),['alpha beta']);
+});
+test('deep hierarchy is initially bounded and explicitly continues without recursive DOM construction',async(t)=>{
+ const h=await harness(),path='Root/Hit/Hit0/'+Array.from({length:1000},(_,i)=>'level'+i).join('/')+'/file.txt';
+ await h.pick([file(path)]);const started=Date.now();await h.query('Hit');await settle(h);
+ const initial=folders(h).length;assert.ok(initial>2&&initial<30);assert.ok(folders(h).every(e=>e.open));assert.ok(moreButton(h));
+ await moreButton(h).click();await settle(h);assert.ok(folders(h).length>initial&&folders(h).length<50);
+ assert.ok(Date.now()-started<5000);t.diagnostic('1000-level synthetic tree: '+(Date.now()-started)+' ms, initial folder nodes: '+initial);
+});
+test('wide results share a global display budget and continue in existing 200-item pages',async(t)=>{
+ const h=await harness();await h.pick(Array.from({length:25000},(_,i)=>file('Root/Hit/Hit0/item'+i+'.txt')));
+ const started=Date.now();await h.query('Hit');
+ while(!h.buttons().length&&Date.now()-started<5000)await new Promise(r=>setTimeout(r,5));
+ await settle(h);const initial=h.buttons().length;
+ assert.ok(initial>0&&initial<=400);assert.ok(moreButton(h));
+ await moreButton(h).click();await settle(h);assert.ok(h.buttons().length>initial&&h.buttons().length<=800);
+ assert.ok(Date.now()-started<5000);t.diagnostic('25000-file synthetic display: '+(Date.now()-started)+' ms, initial file buttons: '+initial);
+});
+test('queued display jobs from a previous query or root never append to newer results',async()=>{
+ const h=await harness();await h.pick(Array.from({length:120},(_,i)=>file('A/hit'+i+'/file.txt')));await h.pick([file('B/new.txt')]);
+ h.ids.root.value='1';await h.ids.root.emit('change');h.ids.query.value='hit';await h.ids['search-form'].emit('submit');
+ h.ids.root.value='2';await h.ids.root.emit('change');await h.query('new');await settle(h);
+ assert.equal(h.ids.results.children.length,1);assert.equal(h.ids.results.children[0].children[0].textContent,'B');
+ assert.equal(h.buttons().length,1);assert.equal(h.buttons()[0].textContent,'new.txt');
 });

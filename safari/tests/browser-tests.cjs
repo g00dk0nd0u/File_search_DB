@@ -44,7 +44,8 @@ const assert=require('node:assert/strict');
       for(const q of ['alpha beta','alpha -draft','"alpha beta"']){await query(q);await results(1);}
       assert.equal(await page.locator('#meta').innerText(),'');
       assert.equal(await page.locator('#results .path').count(),0);
-      await page.locator('#results > details > summary').click();
+      assert.equal(await page.locator('#results > details[open]').count(),1);
+      assert.deepEqual(await page.getByRole('button',{name:'alpha beta.txt',exact:true}).locator('mark').allTextContents(),['alpha beta']);
       await page.getByRole('button',{name:'alpha beta.txt',exact:true}).click();
       await textContains(page.locator('#preview pre'),'日本語のテキスト <script>安全な文字列</script>');
       assert.equal(await page.locator('#preview script').count(),0);
@@ -52,11 +53,19 @@ const assert=require('node:assert/strict');
     });
     await check('OR finds two nested parents; expansion and selection survive typing',async()=>{
       await query('alpha OR gamma');await results(2);
-      assert.equal(await page.locator('#results > details[open]').count(),1);
+      assert.equal(await page.locator('#results > details[open]').count(),2);
       assert.equal(await page.getByRole('button',{name:'alpha beta.txt',exact:true}).getAttribute('aria-pressed'),'true');
     });
+    await check('manual collapse survives redraw but resets for changed query',async()=>{
+      const summary=page.locator('#results > details > summary').first();
+      await summary.click();await page.waitForFunction(()=>!document.querySelector('#results > details').open);
+      await query('alpha OR gamma');await results(2);
+      assert.equal(await page.locator('#results > details[open]').count(),1);
+      await query('alpha');await results(1);
+      assert.equal(await page.locator('#results > details[open]').count(),1);
+    });
     await check('image preview loads a Blob URL',async()=>{
-      await query('sample');await page.locator('#results > details > summary').click();
+      await query('sample');await results(1);
       await page.getByRole('button',{name:'sample.png',exact:true}).click();
       await page.waitForFunction(()=>document.querySelector('#preview img')?.naturalWidth===1);
     });
@@ -82,7 +91,6 @@ const assert=require('node:assert/strict');
       assert.equal(await page.locator('#results > details > summary').innerText(),'別対象');
     });
     await check('read failure hides old results and preview, retaining IndexedDB',async()=>{
-      await page.locator('#results > details > summary').click();
       await page.evaluate(()=>{File.prototype.slice=function(){throw new DOMException('test access lost','NotReadableError');};});
       await page.getByRole('button',{name:'only-other.txt',exact:true}).click();
       await textContains(page.locator('#meta'),'再選択');

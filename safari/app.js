@@ -3,7 +3,7 @@
   "use strict";
   const $ = id => document.getElementById(id), S = FolderSearch, C = SafariCore;
   const model = new C.Model(new C.Storage());
-  const states = new Map();
+  const states = new Map(), childIndexes = new WeakMap();
   let searchGeneration = 0, previewGeneration = 0, objectURL, pickerTask, composing = false, timer;
   const node = (tag, text, cls) => {
     const item = document.createElement(tag);
@@ -12,7 +12,7 @@
     return item;
   };
   const state = () => {
-    if (!states.has(model.activeId)) states.set(model.activeId, {expanded: new Set(), selected: null});
+    if (!states.has(model.activeId)) states.set(model.activeId, {query: null, collapsed: new Set(), selected: null});
     return states.get(model.activeId);
   };
   function notice(message = "") { $("notice").textContent = message; $("notice").hidden = !message; }
@@ -110,50 +110,134 @@
       }
     } catch (error) { readFailure(error); }
   }
-  function childList(session, path, query, matched, ui) {
-    const list = node("ul", undefined, "children");
-    const children = S.children(session.snapshot, path, query, matched);
-    let offset = 0;
-    function more() {
-      const end = Math.min(children.length, offset + 200);
-      while (offset < end) {
-        const child = children[offset++], li = node("li");
-        if (child.kind === "directory") li.append(folder(session, child, "", ui));
-        else {
-          const button = node("button", child.name, "file"); button.type = "button";
-          button.setAttribute("aria-pressed", String(ui.selected === child.path));
-          button.addEventListener("click", () => showPreview(child.path, button)); li.append(button);
-        }
-        list.append(li);
-      }
-      if (offset < children.length) {
-        const button = node("button", "さらに表示", "secondary"); button.type = "button";
-        button.addEventListener("click", () => { button.remove(); more(); }); list.append(button);
-      }
+  // Display-only casefold map: one original character may expand (ß -> ss).
+  // Map every folded UTF-16 unit back to complete original code points.
+  function highlight(name, terms) {
+    let folded = "", offset = 0;
+    const starts = [], ends = [], ranges = [];
+    for (const char of name) {
+      const part = S.fold(char);
+      for (let i = 0; i < part.length; i++) { starts.push(offset); ends.push(offset + char.length); }
+      folded += part; offset += char.length;
     }
-    more();
-    if (!children.length) list.append(node("li", "表示する直下項目はありません。", "hint"));
-    return list;
+    for (const term of terms) {
+      if (!term) continue;
+      for (let at = folded.indexOf(term); at !== -1; at = folded.indexOf(term, at + 1))
+        ranges.push([starts[at], ends[at + term.length - 1]]);
+    }
+    ranges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const merged = [];
+    for (const range of ranges) {
+      const previous = merged.at(-1);
+      if (previous && range[0] <= previous[1]) previous[1] = Math.max(previous[1], range[1]);
+      else merged.push(range.slice());
+    }
+    const fragment = document.createDocumentFragment();
+    let from = 0;
+    for (const [start, end] of merged) {
+      if (start > from) fragment.append(document.createTextNode(name.slice(from, start)));
+      fragment.append(node("mark", name.slice(start, end)));
+      from = end;
+    }
+    if (from < name.length) fragment.append(document.createTextNode(name.slice(from)));
+    return fragment;
   }
-  function folder(session, row, query, ui) {
-    const details = node("details", undefined, "folder"), summary = node("summary", row.name);
-    details.append(summary);
-    let populated = false;
-    const populate = () => {
-      if (populated) return; populated = true;
-      details.append(childList(session, row.path, query, row.folderNameMatched, ui));
+  function displayChildren(session) {
+    // Bucket once per FileList session, avoiding a full index scan per folder.
+    if (!childIndexes.has(session)) {
+      const index = new Map();
+      for (const kind of ["folders", "files"]) for (const item of session.snapshot[kind]) {
+        if (!index.has(item.parent)) index.set(item.parent, {folders: [], files: []});
+        index.get(item.parent)[kind].push(item);
+      }
+      childIndexes.set(session, index);
+    }
+    const index = childIndexes.get(session), cache = new Map();
+    return (path, query, matched) => {
+      const key = JSON.stringify([path, query, !!matched]);
+      if (!cache.has(key)) cache.set(key, S.children(index.get(path) || {folders: [], files: []}, path, query, matched));
+      return cache.get(key);
     };
-    if (ui.expanded.has(row.path)) { details.open = true; populate(); }
-    details.addEventListener("toggle", () => {
-      if (details.open) { ui.expanded.add(row.path); populate(); }
-      else ui.expanded.delete(row.path);
-    });
-    return details;
+  }
+  function resultRenderer(session, query, ui, current) {
+    const terms = S.terms(S.parse(query)), childrenOf = displayChildren(session);
+    const jobs = [];
+    let remaining = 400, draining = false;
+    // Breadth-first jobs avoid recursive tree construction. Yield between small
+    // batches, and stop automatic descent at 8 levels / 400 child rows total.
+    async function drain() {
+      if (draining) return;
+      draining = true;
+      try {
+        let processed = 0;
+        while (jobs.length && current()) {
+          jobs.shift()();
+          if (++processed % 10 === 0) await S.pause();
+        }
+      } finally { draining = false; }
+    }
+    function childList(path, filterQuery, matched, level) {
+      const list = node("ul", undefined, "children"), children = childrenOf(path, filterQuery, matched);
+      let offset = 0;
+      function more(autoLevel) {
+        if (!current()) return;
+        const end = Math.min(children.length, offset + 200);
+        while (offset < end && remaining > 0) {
+          const child = children[offset++], li = node("li"); remaining--;
+          if (child.kind === "directory") li.append(folder(child, "", autoLevel + 1));
+          else {
+            const button = node("button", undefined, "file"); button.type = "button";
+            button.append(highlight(child.name, terms));
+            button.setAttribute("aria-pressed", String(ui.selected === child.path));
+            button.addEventListener("click", () => showPreview(child.path, button)); li.append(button);
+          }
+          list.append(li);
+        }
+        if (offset < children.length) continuation();
+      }
+      function continuation() {
+        const button = node("button", "さらに表示", "secondary"); button.type = "button";
+        button.addEventListener("click", () => {
+          if (!current()) return;
+          button.remove(); remaining = 400; more(0); drain();
+        });
+        list.append(button);
+      }
+      if (!children.length) list.append(node("li", "表示する直下項目はありません。", "hint"));
+      else if (level >= 8 || remaining <= 0) continuation();
+      else more(level);
+      return list;
+    }
+    function folder(row, filterQuery, level = 0) {
+      const details = node("details", undefined, "folder"), summary = node("summary");
+      summary.append(highlight(row.name, terms)); details.append(summary);
+      let populated = false;
+      const populate = () => {
+        if (populated || !details.open || !current()) return;
+        populated = true;
+        details.append(childList(row.path, filterQuery, row.folderNameMatched, level));
+      };
+      details.open = !ui.collapsed.has(row.path);
+      let lastOpen = details.open;
+      if (details.open) jobs.push(populate);
+      details.addEventListener("toggle", () => {
+        // Initial programmatic open also fires toggle in browsers. Record only
+        // actual state changes, and ignore events belonging to an old render.
+        if (!current() || details.open === lastOpen) return;
+        lastOpen = details.open;
+        if (details.open) { ui.collapsed.delete(row.path); remaining = 400; jobs.push(populate); drain(); }
+        else ui.collapsed.add(row.path);
+      });
+      return details;
+    }
+    return {folder: row => folder(row, query), drain, childrenOf};
   }
   async function runSearch() {
     clearTimeout(timer);
     const ticket = ++searchGeneration, id = model.activeId, session = model.sessions.get(id);
     const query = $("query").value;
+    const ui = state();
+    if (ui.query !== query) { ui.query = query; ui.collapsed.clear(); }
     $("results").replaceChildren();
     if (!session) {
       clearPreview(); $("meta").textContent = model.pendingId ? "フォルダの選択内容を確認しています…" :
@@ -165,14 +249,15 @@
     try {
       const rows = await S.search(session.snapshot, query, 100, () => !current());
       if (!current()) return;
-      const ui = state();
-      // Keep expansion/selection state while typing; remove previews outside results.
-      if (!rows.some(row => S.children(session.snapshot, row.path, query, row.folderNameMatched)
+      const renderer = resultRenderer(session, query, ui, current);
+      // Keep file selection while typing; remove previews outside results.
+      if (!rows.some(row => renderer.childrenOf(row.path, query, row.folderNameMatched)
         .some(child => child.path === ui.selected))) clearPreview();
       const fragment = document.createDocumentFragment();
-      for (const row of rows) fragment.append(folder(session, row, query, ui));
+      for (const row of rows) fragment.append(renderer.folder(row));
       $("results").replaceChildren(fragment);
       $("meta").textContent = rows.length ? "" : "一致するフォルダはありません。";
+      await renderer.drain();
     } catch (error) { if (current()) { clearView(); fail(error); } }
   }
   function renderSettings() {
