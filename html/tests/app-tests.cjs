@@ -9,10 +9,10 @@ const Search = require("../search.js");
 const FS = require("../filesystem.js");
 const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => {resolve=a; reject=b;}); return {promise,resolve,reject}; };
 class Element {
-  constructor(tag = "div", text = "") { this.tag = tag; this.children = []; this.text = text; this.hidden = false; this.style = {}; this.value = ""; this.attrs = {}; this.className = ""; this.classList = { add: () => {}, remove: () => {} }; }
+  constructor(tag = "div", text = "") { this.isConnected = true; this.tag = tag; this.children = []; this.text = text; this.hidden = false; this.style = {}; this.value = ""; this.attrs = {}; this.className = ""; this.classList = { add: () => {}, remove: () => {} }; }
   set textContent(v) { this.text = v; this.children = []; }
   get textContent() { return this.text + this.children.map(c => c.textContent).join(""); }
-  append(...items) { this.children.push(...items); }
+  append(...items) { for (const item of items) { this.children = this.children.filter(c => c !== item); this.children.push(item); } }
   replaceChildren(...items) { this.text = ""; this.children = items; }
   setAttribute(k,v) { this.attrs[k] = v; }
   querySelectorAll() { return []; }
@@ -35,6 +35,7 @@ async function app(roots, options={}) {
   const nodes = new Map(), $ = id => {if(!nodes.has(id)) nodes.set(id,new Element());return nodes.get(id);};
   $("progress-wrap").hidden = true;
   const stored = new Map(roots.map(r=>[r.id,snap(r.id)]));
+  if(options.snapshot) stored.set(roots[0].id, options.snapshot);
   if(options.empty) stored.clear();
   const state = {commits:0, reads:0, failSave:false, settings:{query:"txt",rootId:roots[0].id,expanded:[],selected:{},...options.ui},readGate:options.readGate};
   const db = {async roots(){return roots;}, async get(store,id){ if(store==="settings") return state.settings; state.reads++; if(state.readGate) await state.readGate.promise; return stored.get(id);},
@@ -42,7 +43,7 @@ async function app(roots, options={}) {
     async commit(root,value){state.commits++; if(state.failSave) throw new DOMException("Full", "QuotaExceededError"); stored.set(root.id,value);},
     async remove(id){stored.delete(id);}};
   const context = {document:{getElementById:$,createElement:tag=>new Element(tag),createTextNode:t=>new Element("text",t),querySelectorAll:()=>[],documentElement:{dataset:{}}},
-    FolderSearch:Search,FolderFS:FS,FolderStore:{open:async()=>db},Option:class extends Element {constructor(t,v){super("option",t);this.value=v;}},
+    FolderSearch:Search,FolderFS:options.fileAt ? {...FS, fileAt:options.fileAt} : FS,FolderStore:{open:async()=>db},Option:class extends Element {constructor(t,v){super("option",t);this.value=v;}},
     URL,AbortController,DOMException,crypto:require("node:crypto").webcrypto,setTimeout,clearTimeout,confirm:()=>true};
   context.window={indexedDB:{},isSecureContext:true,showDirectoryPicker:async()=>roots[0].handle,addEventListener:()=>{}};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,"../app.js"),"utf8"),context);
@@ -63,7 +64,7 @@ async function test(name,fn){await fn();console.log("PASS "+name);count++;}
     assert.deepEqual(x.stored.get("A").files.map(f=>f.name),["new.txt"]);
     x.$("results").children[0].children[0].children[0].onclick();
     await x.action("Reload");assert.equal(a.state.scans,2);
-    assert.equal(x.$("results").children[0].children[1].hidden,false);
+    assert.equal(x.$("results").children[0].children[1].hidden,true);
     assert.equal(x.$("query").value,"new");
     await x.submit("old");assert.equal(x.$("results").children.length,0);assert.equal(a.state.scans,2);assert.equal(a.state.requests,0);
   });
@@ -132,6 +133,103 @@ async function test(name,fn){await fn();console.log("PASS "+name);count++;}
     a.state.permission="denied";a.state.permissionGate.resolve();
     await x.submit("old");assert.match(x.$("meta").textContent,/B/);assert.equal(a.state.scans,0);
     b.state.gate.resolve();await until(()=>x.state.commits===1);
+  });
+
+  const all = (node, predicate) => [...(predicate(node) ? [node] : []), ...node.children.flatMap(c => all(c,predicate))];
+  const cls = (node, name) => all(node,n=>n.className.split(" ").includes(name));
+  const toggle = x => cls(x.$("results"),"folder-toggle")[0];
+  const detail = x => cls(x.$("results"),"detail")[0];
+  const treeSnapshot = () => ({folders:[{path:"",parent:null,name:"A",depth:0},
+    {path:"sub",parent:"",name:"sub",depth:1},{path:"sub/deep",parent:"sub",name:"deep",depth:2}],
+    files:[{path:"sub/deep/visible.txt",parent:"sub/deep",name:"visible.txt",depth:3}]});
+  await test("initial results and nonmatching subfolders expand; nested and top collapse survive same query",async()=>{
+    const a=fixture("A"),x=await app([a],{snapshot:treeSnapshot(),ui:{query:"A"}});
+    await until(()=>a.state.scans===1);
+    assert.equal(detail(x).hidden,false);
+    assert.match(x.$("results").textContent,/visible.txt/);
+    const nested=cls(x.$("results"),"subfolder-toggle")[0];
+    assert.equal(nested.attrs["aria-expanded"],"true");nested.onclick();
+    await x.submit("A");assert.equal(cls(x.$("results"),"subfolder-toggle")[0].attrs["aria-expanded"],"false");
+    toggle(x).onclick();assert.equal(detail(x).hidden,true);
+    await x.submit("A");assert.equal(detail(x).hidden,true);
+    await x.submit("visible");assert.equal(detail(x).hidden,false);
+    await x.submit("A");assert.equal(detail(x).hidden,false);
+    assert.equal(cls(x.$("results"),"subfolder-toggle")[0].attrs["aria-expanded"],"true");
+  });
+  await test("closed result survives async commit; new results open; root switch resets closure",async()=>{
+    const a=fixture("A"),b=fixture("B"),x=await app([a,b]);await until(()=>a.state.scans===1);
+    toggle(x).onclick();assert.equal(detail(x).hidden,true);
+    a.state.gate.resolve();await until(()=>x.state.commits===1);await x.submit("txt");
+    assert.equal(detail(x).hidden,true);
+    await x.switch("B");await until(()=>b.state.scans===1);assert.equal(detail(x).hidden,false);
+    await x.switch("A");assert.equal(detail(x).hidden,false);
+  });
+  await test("IME blocks redraw during async refresh; committed query then expands",async()=>{
+    const a=fixture("A"),x=await app([a]);await until(()=>a.state.scans===1);
+    toggle(x).onclick();x.$("query").oncompositionstart();x.$("query").value="new";x.$("query").oninput();
+    a.state.gate.resolve();await until(()=>x.state.commits===1);assert.equal(detail(x).hidden,true);
+    x.$("query").oncompositionend();await until(()=>detail(x)?.hidden===false);
+    assert.match(x.$("results").textContent,/new.txt/);
+  });
+  for (const [name,query,expected] of [
+    ["Alpha beta.txt","alpha beta",["Alpha","beta"]],
+    ["Alpha.txt","alpha OR absent",["Alpha"]],
+    ["Alpha draft.txt","alpha -draft",["Alpha"]],
+    ["Alpha beta.txt",'"alpha beta"',["Alpha beta"]],
+    ["banana.txt","ana OR nan",["anana"]],
+    ["abcd.txt","ab OR cd",["abcd"]],
+    ["日本語資料.txt","日本語",["日本語"]],
+    ["Straße ﬃ Σς 𐐀.txt","ss OR ffi OR σ OR 𐐨",["ß","ﬃ","Σς","𐐀"]],
+    ["İ.txt","i",["İ"]],
+    ["<img onerror=alert(1)>.txt","img",["img"]],
+    ["draft.txt","-absent",[]],
+  ]) await test("safe contiguous highlight: "+name+" / "+query,async()=>{
+    const a=fixture("A"),x=await app([a],{snapshot:snap("A",[name]),ui:{query:"A"}});
+    await until(()=>a.state.scans===1);
+    // Directory preview deliberately lists all names, including names excluded
+    // by a query: only the positive literals should receive markers there too.
+    const item=cls(x.$("results"),"item")[0];
+    assert.equal(item.textContent,name);
+    await x.submit(query);
+    // Use a matching root name to keep the nonmatching child visible, just as
+    // folder-name results do in the real UI.
+    const y=await app([fixture("A")],{snapshot:{...snap("A",[name]),folders:[{path:"",parent:null,name:Search.parse(query).groups[0]?.join(" ") || "A",depth:0}]},ui:{query}});
+    await until(()=>y.$("meta").textContent.includes("folders"));
+    const target=cls(y.$("results"),"item").find(n=>n.textContent===name);
+
+    assert(target,query);
+    assert.deepEqual(all(target,n=>n.tag==="mark").map(n=>n.textContent),expected);
+    assert.equal(all(target,n=>n.tag==="img").length,0);
+  });
+  await test("bounded initial DOM for 25000 files / 1500 levels; more and manual deep expansion",async()=>{
+    const a=fixture("A"),snapshot=snap("A",Array.from({length:25000},(_,i)=>`file${i}.txt`));
+    let parent="";
+    for(let i=0;i<1500;i++){const path=parent+"/d";snapshot.folders.push({name:"d",path,parent,depth:i+1});parent=path;}
+    const x=await app([a],{snapshot,ui:{query:"A"}});await until(()=>a.state.scans===1);
+    assert(cls(x.$("results"),"item").length<=500);
+    const nested=cls(x.$("results"),"subfolder-toggle");assert.equal(nested.length,4);
+    assert.equal(nested.at(-1).attrs["aria-expanded"],"false");nested.at(-1).onclick();
+    assert(cls(x.$("results"),"subfolder-toggle").length>4);
+    const before=cls(x.$("results"),"item").length;
+    cls(x.$("results"),"more-items").find(n=>!n.hidden).onclick();
+    assert(cls(x.$("results"),"item").length>before);
+    assert(cls(x.$("results"),"item").length<=before+100);
+  });
+  await test("expanded nested file buttons still select PDF/image/text previews; collapse cancels pane",async()=>{
+    const a=fixture("A"),snapshot=treeSnapshot();
+    snapshot.files=["sample.pdf","sample.png","sample.txt"].map(name=>({name,path:"sub/deep/"+name,parent:"sub/deep",depth:3}));
+    let reads=0;
+    const x=await app([a],{snapshot,ui:{query:"A"},fileAt:async(handle,path)=>{
+      reads++;const blob=new Blob(["hello"],{type:"text/plain"});blob.name=path.split("/").at(-1);return blob;
+    }});await until(()=>a.state.scans===1);assert.equal(reads,0);
+    for(const [ext,tag] of [["pdf","iframe"],["png","img"],["txt","pre"]]) {
+      cls(x.$("results"),"item").find(n=>n.textContent===`sample.${ext}`).onclick();
+      await until(()=>all(x.$("results"),n=>n.tag===tag).length===1);
+      assert.equal(x.state.settings.selected[""],`sub/deep/sample.${ext}`);
+    }
+    assert.equal(reads,3);toggle(x).onclick();
+    assert.equal(all(x.$("results"),n=>n.tag==="pre").length,0);
+    assert.equal(a.state.requests,0);
   });
   console.log(`${count} app integration tests passed (simulated DOM/handles/storage)`);
 })().catch(e=>{console.error(e);process.exitCode=1;});
