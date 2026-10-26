@@ -1,0 +1,41 @@
+name: Safari Phase 0 file probe
+
+on:
+  pull_request:
+    branches: [main3]
+    paths:
+      - "safari/**"
+      - ".github/workflows/safari-phase0.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: safari-phase0-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  safari-phase0:
+    runs-on: macos-15
+    timeout-minutes: 10
+    env:
+      SAFARI_ARTIFACTS: ${{ runner.temp }}/safari-phase0
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python syntax and existing regression tests
+        run: |
+          python3 -m py_compile safari/check_safari.py
+          python3 -m unittest discover -s tests -v
+      - name: Enable Apple WebDriver on disposable CI runner
+        run: sudo /usr/bin/safaridriver --enable
+      - name: Installed Safari direct file URL and restart probe
+        run: python3 safari/check_safari.py
+      - name: Preserve evidence including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: safari-phase0-${{ github.run_attempt }}
+          path: ${{ env.SAFARI_ARTIFACTS }}
+          if-no-files-found: warn
+          retention-days: 14
