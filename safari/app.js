@@ -4,7 +4,7 @@
   const $ = id => document.getElementById(id), S = FolderSearch, C = SafariCore;
   const model = new C.Model(new C.Storage());
   const states = new Map(), childIndexes = new WeakMap();
-  let searchGeneration = 0, previewGeneration = 0, objectURL, pickerTask, composing = false, timer;
+  let searchGeneration = 0, previewGeneration = 0, objectURL, pickerTask, composing = false, timer, captureExpansion;
   const node = (tag, text, cls) => {
     const item = document.createElement(tag);
     if (text !== undefined) item.textContent = text;
@@ -25,7 +25,12 @@
     if (objectURL) URL.revokeObjectURL(objectURL);
     objectURL = null;
   }
-  function clearView() { searchGeneration++; clearTimeout(timer); clearPreview(); $("results").replaceChildren(); }
+  function rememberExpansion() {
+    // Native details.toggle is queued; read the actual state before detaching
+    // a render even if its event has not run (or input invalidated its ticket).
+    captureExpansion?.(); captureExpansion = null;
+  }
+  function clearView() { rememberExpansion(); searchGeneration++; clearTimeout(timer); clearPreview(); $("results").replaceChildren(); }
   function view(settings) {
     $("settings-view").hidden = !settings; $("search-view").hidden = settings;
     if (settings) renderSettings(); else { renderRoots(); runSearch(); $("query").focus(); }
@@ -161,7 +166,8 @@
   }
   function resultRenderer(session, query, ui, current) {
     const terms = S.terms(S.parse(query)), childrenOf = displayChildren(session);
-    const jobs = [];
+    const jobs = [], observers = [];
+    captureExpansion = () => { for (const remember of observers) remember(); };
     let remaining = 400, draining = false;
     // Breadth-first jobs avoid recursive tree construction. Yield between small
     // batches, and stop automatic descent at 8 levels / 400 child rows total.
@@ -219,20 +225,27 @@
       };
       details.open = !ui.collapsed.has(row.path);
       let lastOpen = details.open;
+      const remember = () => {
+        if (details.open === lastOpen) return;
+        lastOpen = details.open;
+        if (details.open) ui.collapsed.delete(row.path);
+        else ui.collapsed.add(row.path);
+      };
+      observers.push(remember);
       if (details.open) jobs.push(populate);
       details.addEventListener("toggle", () => {
         // Initial programmatic open also fires toggle in browsers. Record only
         // actual state changes, and ignore events belonging to an old render.
         if (!current() || details.open === lastOpen) return;
-        lastOpen = details.open;
-        if (details.open) { ui.collapsed.delete(row.path); remaining = 400; jobs.push(populate); drain(); }
-        else ui.collapsed.add(row.path);
+        remember();
+        if (details.open) { remaining = 400; jobs.push(populate); drain(); }
       });
       return details;
     }
     return {folder: row => folder(row, query), drain, childrenOf};
   }
   async function runSearch() {
+    rememberExpansion();
     clearTimeout(timer);
     const ticket = ++searchGeneration, id = model.activeId, session = model.sessions.get(id);
     const query = $("query").value;

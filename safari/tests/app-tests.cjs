@@ -186,3 +186,22 @@ test('queued display jobs from a previous query or root never append to newer re
  assert.equal(h.ids.results.children.length,1);assert.equal(h.ids.results.children[0].children[0].textContent,'B');
  assert.equal(h.buttons().length,1);assert.equal(h.buttons()[0].textContent,'new.txt');
 });
+
+test('manual collapse immediately followed by Search survives the delayed native toggle event',async()=>{
+ const h=await harness();await h.pick([file('Root/alpha/file.txt')]);await h.query('alpha');
+ const details=namedFolder(h,'alpha');
+ // A real summary click applies its default action before the queued toggle event.
+ await details.children[0].click();details.open=false;
+ await h.query('alpha');await details.emit('toggle');
+ assert.equal(namedFolder(h,'alpha').open,false);
+});
+
+test('manual reopen and root switch retain actual state before queued toggle events',async()=>{
+ const h=await harness();await h.pick([file('A/alpha/one.txt')]);await h.pick([file('B/alpha/two.txt')]);await h.query('alpha');
+ await toggle(namedFolder(h,'alpha'),false);await h.query('alpha');
+ let details=namedFolder(h,'alpha');await details.children[0].click();details.open=true;
+ await h.query('alpha');await details.emit('toggle');assert.equal(namedFolder(h,'alpha').open,true);
+ details=namedFolder(h,'alpha');await details.children[0].click();details.open=false;
+ h.ids.root.value='1';await h.ids.root.emit('change');await h.tick();await details.emit('toggle');
+ h.ids.root.value='2';await h.ids.root.emit('change');await h.tick();assert.equal(namedFolder(h,'alpha').open,false);
+});
