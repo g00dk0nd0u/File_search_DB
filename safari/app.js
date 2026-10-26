@@ -2,6 +2,21 @@
 (async function () {
   "use strict";
   const $ = id => document.getElementById(id), S = FolderSearch, C = SafariCore;
+  const themeKey = "file-search-safari-theme";
+  let theme = "light";
+  try { if (localStorage.getItem(themeKey) === "dark") theme = "dark"; } catch (_) {}
+  function applyTheme() {
+    document.documentElement.setAttribute("data-theme", theme);
+    $("theme-toggle").setAttribute("aria-pressed", String(theme === "dark"));
+    $("theme-status").textContent = theme === "dark" ? "Dark" : "Light";
+  }
+  applyTheme();
+  $("theme-toggle").addEventListener("click", () => {
+    theme = theme === "dark" ? "light" : "dark";
+    applyTheme();
+    try { localStorage.setItem(themeKey, theme); }
+    catch (_) { notice("テーマはこの画面に反映しましたが、設定を保存できませんでした。"); }
+  });
   const model = new C.Model(new C.Storage());
   const states = new Map(), childIndexes = new WeakMap();
   let searchGeneration = 0, previewGeneration = 0, objectURL, pickerTask, composing = false, timer, captureExpansion;
@@ -147,25 +162,58 @@
     if (from < name.length) fragment.append(document.createTextNode(name.slice(from)));
     return fragment;
   }
-  function displayChildren(session) {
-    // Bucket once per FileList session, avoiding a full index scan per folder.
+  async function displayChildren(session, rows, queryText, current) {
+    // Build parent buckets once per session. Only inspect result subtrees per
+    // query, memoizing shared descendants; never rescan the index per folder.
+    let processed = 0;
+    const checkpoint = async () => {
+      if (++processed % 500 === 0) await S.pause();
+      if (!current()) throw new DOMException("Outdated display", "AbortError");
+    };
     if (!childIndexes.has(session)) {
       const index = new Map();
       for (const kind of ["folders", "files"]) for (const item of session.snapshot[kind]) {
         if (!index.has(item.parent)) index.set(item.parent, {folders: [], files: []});
         index.get(item.parent)[kind].push(item);
+        await checkpoint();
       }
       childIndexes.set(session, index);
     }
-    const index = childIndexes.get(session), cache = new Map();
-    return (path, query, matched) => {
-      const key = JSON.stringify([path, query, !!matched]);
-      if (!cache.has(key)) cache.set(key, S.children(index.get(path) || {folders: [], files: []}, path, query, matched));
-      return cache.get(key);
+    const index = childIndexes.get(session), relevant = new Map(), visibleFiles = new Set();
+    const query = S.parse(queryText), cache = new Map();
+    // Iterative postorder keeps deep paths safe and yields on large subtrees.
+    for (const row of rows) {
+      const stack = [[row.path, false]];
+      while (stack.length) {
+        const [path, visited] = stack.pop();
+        if (relevant.has(path)) continue;
+        const bucket = index.get(path) || {folders: [], files: []};
+        if (!visited) {
+          stack.push([path, true]);
+          for (const folder of bucket.folders) stack.push([folder.path, false]);
+        } else {
+          let found = false;
+          for (const file of bucket.files) {
+            if (S.matches(file.name, query)) { visibleFiles.add(file.path); found = true; }
+            await checkpoint();
+          }
+          relevant.set(path, found || bucket.folders.some(folder =>
+            S.matches(folder.name, query) || relevant.get(folder.path)));
+        }
+        await checkpoint();
+      }
+    }
+    const childrenOf = path => {
+      if (!cache.has(path)) cache.set(path,
+        S.children(index.get(path) || {folders: [], files: []}, path).filter(item =>
+          item.kind === "file" ? visibleFiles.has(item.path) :
+            S.matches(item.name, query) || relevant.get(item.path)));
+      return cache.get(path);
     };
+    return {childrenOf, visibleFiles};
   }
-  function resultRenderer(session, query, ui, current) {
-    const terms = S.terms(S.parse(query)), childrenOf = displayChildren(session);
+  function resultRenderer(session, query, ui, current, display) {
+    const terms = S.terms(S.parse(query)), {childrenOf, visibleFiles} = display;
     const jobs = [], observers = [];
     captureExpansion = () => { for (const remember of observers) remember(); };
     let remaining = 400, draining = false;
@@ -182,15 +230,15 @@
         }
       } finally { draining = false; }
     }
-    function childList(path, filterQuery, matched, level) {
-      const list = node("ul", undefined, "children"), children = childrenOf(path, filterQuery, matched);
+    function childList(path, level) {
+      const list = node("ul", undefined, "children"), children = childrenOf(path);
       let offset = 0;
       function more(autoLevel) {
         if (!current()) return;
         const end = Math.min(children.length, offset + 200);
         while (offset < end && remaining > 0) {
           const child = children[offset++], li = node("li"); remaining--;
-          if (child.kind === "directory") li.append(folder(child, "", autoLevel + 1));
+          if (child.kind === "directory") li.append(folder(child, autoLevel + 1));
           else {
             const button = node("button", undefined, "file"); button.type = "button";
             button.append(highlight(child.name, terms));
@@ -214,14 +262,14 @@
       else more(level);
       return list;
     }
-    function folder(row, filterQuery, level = 0) {
+    function folder(row, level = 0) {
       const details = node("details", undefined, "folder"), summary = node("summary");
       summary.append(highlight(row.name, terms)); details.append(summary);
       let populated = false;
       const populate = () => {
         if (populated || !details.open || !current()) return;
         populated = true;
-        details.append(childList(row.path, filterQuery, row.folderNameMatched, level));
+        details.append(childList(row.path, level));
       };
       details.open = !ui.collapsed.has(row.path);
       let lastOpen = details.open;
@@ -242,7 +290,7 @@
       });
       return details;
     }
-    return {folder: row => folder(row, query), drain, childrenOf};
+    return {folder: row => folder(row), drain, visibleFiles};
   }
   async function runSearch() {
     rememberExpansion();
@@ -262,10 +310,11 @@
     try {
       const rows = await S.search(session.snapshot, query, 100, () => !current());
       if (!current()) return;
-      const renderer = resultRenderer(session, query, ui, current);
+      const display = await displayChildren(session, rows, query, current);
+      if (!current()) return;
+      const renderer = resultRenderer(session, query, ui, current, display);
       // Keep file selection while typing; remove previews outside results.
-      if (!rows.some(row => renderer.childrenOf(row.path, query, row.folderNameMatched)
-        .some(child => child.path === ui.selected))) clearPreview();
+      if (!renderer.visibleFiles.has(ui.selected)) clearPreview();
       const fragment = document.createDocumentFragment();
       for (const row of rows) fragment.append(renderer.folder(row));
       $("results").replaceChildren(fragment);

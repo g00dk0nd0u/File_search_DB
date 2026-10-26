@@ -16,6 +16,8 @@ const assert=require('node:assert/strict');
   await fs.writeFile(path.join(root,'日本語','深い階層','gamma delta.txt'),'nested');
   await fs.writeFile(path.join(root,'日本語','sample.png'),Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jKfoAAAAASUVORK5CYII=','base64'));
   await fs.writeFile(path.join(other,'only-other.txt'),'other');
+  await fs.writeFile(path.join(root,'日本語','sample.pdf'),'%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 0/Kids[]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF');
+  await fs.writeFile(path.join(root,'日本語','長い名前'.repeat(20)+'.txt'),'long');
   const browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE?{executablePath:process.env.CHROMIUM_EXECUTABLE}:{})});
   const page=await browser.newPage({viewport:{width:1440,height:900}}), errors=[], remote=[];
   page.on('pageerror',e=>errors.push(e.message));
@@ -35,6 +37,30 @@ const assert=require('node:assert/strict');
       assert.equal(await page.locator('#results > *').count(),0);
       assert.equal(await page.locator('#root').getAttribute('aria-label'),'検索対象ルート');
       assert.equal(await page.locator('label[for=root], #reselect, .footer, #search-view .hint:not(#preview .hint)').count(),0);
+    });
+    await check('compact preview-first 2:1 desktop layout and empty height',async()=>{
+      const layout=await page.evaluate(()=>{
+        const preview=document.querySelector('aside'),results=document.querySelector('#results');
+        const a=preview.getBoundingClientRect(),b=results.getBoundingClientRect();
+        return {first:document.querySelector('.workspace').firstElementChild===preview,
+          left:a.x<b.x,ratio:a.width/b.width,height:a.height,font:getComputedStyle(document.documentElement).fontSize,
+          sticky:getComputedStyle(preview).position,overflow:document.documentElement.scrollWidth>innerWidth};
+      });
+      assert.equal(layout.first,true);assert.equal(layout.left,true);assert.ok(Math.abs(layout.ratio-2)<.02);
+      assert.ok(layout.height>=316);assert.equal(layout.font,'14px');assert.equal(layout.sticky,'sticky');assert.equal(layout.overflow,false);
+    });
+    await check('Settings-only keyboard theme toggle survives reload without touching IndexedDB',async()=>{
+      await page.locator('#settings-button').click();
+      const button=page.getByRole('button',{name:'Dark Mode',exact:true});
+      await button.focus();await page.keyboard.press('Space');
+      assert.equal(await button.getAttribute('aria-pressed'),'true');
+      assert.equal(await page.locator('html').getAttribute('data-theme'),'dark');
+      await page.locator('#back').click();assert.equal(await button.isVisible(),false);
+      assert.equal(await page.locator('html').getAttribute('data-theme'),'dark');
+      await page.reload();await page.locator('#settings-button:not([disabled])').waitFor();
+      assert.equal(await page.locator('html').getAttribute('data-theme'),'dark');
+      await page.locator('#settings-button').click();await button.click();
+      assert.equal(await page.locator('html').getAttribute('data-theme'),'light');await page.locator('#back').click();
     });
     await check('register real fixture directory via input and commit real IndexedDB',async()=>{
       await page.locator('#settings-button').click();await pick(page.locator('#add'),root);
@@ -68,6 +94,32 @@ const assert=require('node:assert/strict');
       await query('sample');await results(1);
       await page.getByRole('button',{name:'sample.png',exact:true}).click();
       await page.waitForFunction(()=>document.querySelector('#preview img')?.naturalWidth===1);
+    });
+    await check('folder-only hit filters unrelated files while keeping deep path; long names wrap',async()=>{
+      await query('日本語 OR gamma');await results(2);
+      assert.equal(await page.getByRole('button',{name:'alpha beta.txt',exact:true}).count(),0);
+      assert.ok(await page.getByRole('button',{name:'gamma delta.txt',exact:true}).count()>0);
+      await query('長い名前');await results(1);
+      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    });
+    await check('PDF frame uses Blob URL and viewport-bounded expanded height',async()=>{
+      await query('sample.pdf');await results(1);await page.getByRole('button',{name:'sample.pdf',exact:true}).click();
+      const frame=page.locator('#preview iframe');await frame.waitFor();
+      assert.match(await frame.getAttribute('src'),/^blob:/);assert.equal(await frame.getAttribute('title'),'sample.pdf');
+      const box=await frame.boundingBox();assert.ok(box.height>585&&box.height<=770);
+      // Native PDF rendering still requires Mac Safari; this proves the frame only.
+    });
+    await check('dark selected preview and mobile preview-first flow have no page overflow',async()=>{
+      await page.locator('#settings-button').click();await page.locator('#theme-toggle').click();await page.locator('#back').click();
+      await query('sample');await results(1);await page.getByRole('button',{name:'sample.png',exact:true}).click();
+      await page.waitForFunction(()=>document.querySelector('#preview img')?.naturalWidth===1);
+      assert.equal(await page.getByRole('button',{name:'sample.png',exact:true}).getAttribute('aria-pressed'),'true');
+      await page.screenshot({path:'/tmp/safari-search-dark.png',fullPage:true});
+      await page.setViewportSize({width:390,height:844});
+      const a=await page.locator('aside').boundingBox(),b=await page.locator('#results').boundingBox();
+      assert.ok(a.y<b.y);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+      await page.screenshot({path:'/tmp/safari-search-mobile.png',fullPage:true});
+      await page.setViewportSize({width:1440,height:900});
     });
     await check('multiple registered roots switch without mixing files',async()=>{
       await page.locator('#settings-button').click();await pick(page.locator('#add'),other);

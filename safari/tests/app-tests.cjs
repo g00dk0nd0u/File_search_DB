@@ -10,7 +10,7 @@ function file(path,body='日本語'){
  return {name:path.split('/').at(-1),webkitRelativePath:path,size:blob.size,lastModified:1,
    slice:(...args)=>blob.slice(...args)};
 }
-async function harness(records=[],search=S.search){
+async function harness(records=[],search=S.search,preferences=new Map(),storageFails=false){
  class Element{
    constructor(tag='div'){this.tagName=tag;this.children=[];this.events={};this.attrs={};this.value='';this._text='';this.hidden=false;}
    set textContent(v){this._text=v;this.children=[];} get textContent(){return this._text+this.children.map(c=>c.textContent).join('');}
@@ -22,10 +22,10 @@ async function harness(records=[],search=S.search){
    setAttribute(k,v){this.attrs[k]=v;} getAttribute(k){return this.attrs[k];}
    remove(){this.parent.children=this.parent.children.filter(c=>c!==this);}
  }
- const ids=Object.fromEntries(['search-view','settings-view','query','root','picker','preview','preview-title','results','roots','notice','meta','search','search-form','settings-button','back','add'].map(id=>[id,new Element()]));
+ const ids=Object.fromEntries(['search-view','settings-view','query','root','picker','preview','preview-title','results','roots','notice','meta','search','search-form','settings-button','back','add','theme-toggle','theme-status'].map(id=>[id,new Element()]));
  const all=()=>Object.values(ids).flatMap(e=>[e,...desc(e)]);
  const desc=e=>e.children.flatMap(c=>[c,...desc(c)]);
- const document={getElementById:id=>ids[id],createElement:tag=>new Element(tag),createTextNode:text=>Object.assign(new Element("#text"),{textContent:text}),createDocumentFragment:()=>Object.assign(new Element(),{fragment:true}),
+ const document={documentElement:new Element("html"),getElementById:id=>ids[id],createElement:tag=>new Element(tag),createTextNode:text=>Object.assign(new Element("#text"),{textContent:text}),createDocumentFragment:()=>Object.assign(new Element(),{fragment:true}),
  querySelectorAll:()=>all().filter(e=>e.className==='file'&&e.getAttribute('aria-pressed')==='true')};
  const stored=new Map(records.map(r=>[r.id,structuredClone(r)])), events={};
  class Storage{
@@ -34,7 +34,7 @@ async function harness(records=[],search=S.search){
    async remove(id){stored.delete(id);}
  }
  let id=0;
- await vm.runInNewContext(source,{document,window:{addEventListener:(name,fn)=>events[name]=fn},FolderSearch:{...S,search},SafariCore:{...C,Storage},
+ await vm.runInNewContext(source,{document,DOMException,localStorage:{getItem:k=>preferences.get(k),setItem:(k,v)=>{if(storageFails)throw Error("quota");preferences.set(k,v);}},window:{addEventListener:(name,fn)=>events[name]=fn},FolderSearch:{...S,search},SafariCore:{...C,Storage},
    setTimeout,clearTimeout,Blob,URL:{createObjectURL:()=> 'blob:test',revokeObjectURL(){}},crypto:{randomUUID:()=>String(++id)},Array,Map,Set});
  async function reselect(){
    await ids['settings-button'].click();
@@ -45,7 +45,7 @@ async function harness(records=[],search=S.search){
  async function query(q){ids.query.value=q;await ids['search-form'].emit('submit');await tick();}
  const buttons=()=>desc(ids.results).filter(e=>e.className==='file');
  async function expand(){for(const e of [...ids.results.children]){e.open=true;await e.emit('toggle');}}
- return {ids,stored,events,pick,reselect,query,expand,buttons,desc,tick};
+ return {ids,document,preferences,stored,events,pick,reselect,query,expand,buttons,desc,tick};
 }
 test('UI startup with saved index displays registration but no results or previews',async()=>{
  const h=await harness([{id:'old',displayName:'保存済み',rootName:'A',snapshot:{folders:[{path:'',name:'A'}],files:[{name:'secret'}]}}]);
@@ -120,7 +120,7 @@ test('result and nested folders open initially, files and nested highlights are 
  assert.deepEqual(marks(h,namedFolder(h,'友依子_仕事').children[0]),['友依子']);
  assert.deepEqual(marks(h,namedFolder(h,'友依子_子').children[0]),['友依子']);
  assert.deepEqual(marks(h,h.buttons().find(e=>e.textContent==='友依子_特記.txt')),['友依子']);
- assert.deepEqual(marks(h,h.buttons().find(e=>e.textContent==='実施設計図一式.pdf')),[]);
+ assert.equal(h.buttons().some(e=>e.textContent==='実施設計図一式.pdf'),false);
 });
 test('manual collapse survives same-query redraw and reopens on changed query',async()=>{
  const h=await harness();await h.pick([file('Root/alpha/alpha_child/file.txt')]);await h.query('alpha');
@@ -145,7 +145,7 @@ test('IME preserves collapse during composition and resets expansion/highlights 
 });
 test('AND OR exclusions and quoted phrases highlight only positive literal matches',async()=>{
  const h=await harness();await h.pick([file('alpha beta gamma/ALPHA alpha beta gamma draft.pdf')]);
- for(const [query,expected] of [['alpha beta',['ALPHA','alpha','beta']],['alpha OR gamma -draft',['ALPHA','alpha','gamma']],['"alpha beta"',['alpha beta']],['-draft',[]]]){
+ for(const [query,expected] of [['alpha beta',['ALPHA','alpha','beta']],['alpha OR gamma -absent',['ALPHA','alpha','gamma']],['"alpha beta"',['alpha beta']],['-absent',[]]]){
   await h.query(query);assert.deepEqual(marks(h,h.buttons()[0]),expected);
  }
 });
@@ -164,14 +164,14 @@ test('names containing HTML are rendered as literal text nodes and mark elements
  assert.deepEqual(marks(h,button),['alpha beta']);
 });
 test('deep hierarchy is initially bounded and explicitly continues without recursive DOM construction',async(t)=>{
- const h=await harness(),path='Root/Hit/Hit0/'+Array.from({length:1000},(_,i)=>'level'+i).join('/')+'/file.txt';
+ const h=await harness(),path='Root/Hit/Hit0/'+Array.from({length:1000},(_,i)=>'level'+i).join('/')+'/Hit_file.txt';
  await h.pick([file(path)]);const started=Date.now();await h.query('Hit');await settle(h);
  const initial=folders(h).length;assert.ok(initial>2&&initial<30);assert.ok(folders(h).every(e=>e.open));assert.ok(moreButton(h));
  await moreButton(h).click();await settle(h);assert.ok(folders(h).length>initial&&folders(h).length<50);
  assert.ok(Date.now()-started<5000);t.diagnostic('1000-level synthetic tree: '+(Date.now()-started)+' ms, initial folder nodes: '+initial);
 });
 test('wide results share a global display budget and continue in existing 200-item pages',async(t)=>{
- const h=await harness();await h.pick(Array.from({length:25000},(_,i)=>file('Root/Hit/Hit0/item'+i+'.txt')));
+ const h=await harness();await h.pick(Array.from({length:25000},(_,i)=>file('Root/Hit/Hit0/Hit_item'+i+'.txt')));
  const started=Date.now();await h.query('Hit');
  while(!h.buttons().length&&Date.now()-started<5000)await new Promise(r=>setTimeout(r,5));
  await settle(h);const initial=h.buttons().length;
@@ -204,4 +204,59 @@ test('manual reopen and root switch retain actual state before queued toggle eve
  details=namedFolder(h,'alpha');await details.children[0].click();details.open=false;
  h.ids.root.value='1';await h.ids.root.emit('change');await h.tick();await details.emit('toggle');
  h.ids.root.value='2';await h.ids.root.emit('change');await h.tick();assert.equal(namedFolder(h,'alpha').open,false);
+});
+
+
+test('folder-name hits never expose unrelated files; retain only paths to descendant matches',async()=>{
+ const h=await harness();await h.pick(['Root/健康/健康保険証.pdf','Root/健康/健康診断.pdf','Root/健康/旅行写真.jpg','Root/健康/領収書.pdf','Root/健康/中間/深い/健康記録.txt','Root/健康/無関係/写真.jpg','Root/健康のみ/旅行.jpg'].map(p=>file(p)));
+ await h.query('健康');await settle(h);
+ assert.deepEqual([...new Set(h.buttons().map(e=>e.textContent))].sort(),['健康保険証.pdf','健康診断.pdf','健康記録.txt'].sort());
+ for(const name of ['健康','中間','深い','健康のみ'])assert.ok(namedFolder(h,name));
+ assert.equal(namedFolder(h,'無関係'),undefined);
+ assert.equal(h.buttons().some(e=>/旅行|領収書|写真/.test(e.textContent)),false);
+});
+test('display filtering carries AND OR exclusion and phrases through descendants',async()=>{
+ const h=await harness();await h.pick(['Root/alpha beta/bridge/deep/alpha beta.txt','Root/alpha beta/bridge/deep/alpha draft beta.txt','Root/alpha beta/bridge/deep/gamma delta.txt','Root/alpha beta/bridge/deep/unrelated.txt'].map(p=>file(p)));
+ for(const [q,names] of [['alpha beta',['alpha beta.txt','alpha draft beta.txt']],['alpha OR gamma -draft',['alpha beta.txt','gamma delta.txt']],['"alpha beta"',['alpha beta.txt']],['-draft',['alpha beta.txt','gamma delta.txt','unrelated.txt']]]){
+  await h.query(q);await settle(h);
+  assert.deepEqual([...new Set(h.buttons().map(e=>e.textContent))].sort(),names.sort());
+ }
+});
+test('theme toggles immediately, persists across startup and leaves registrations untouched',async()=>{
+ const records=[{id:'saved',displayName:'Saved',rootName:'A',snapshot:{folders:[],files:[]}}];
+ const preferences=new Map(),h=await harness(records,S.search,preferences),before=structuredClone([...h.stored]);
+ assert.equal(h.document.documentElement.getAttribute('data-theme'),'light');
+ await h.ids['theme-toggle'].click();
+ assert.equal(h.document.documentElement.getAttribute('data-theme'),'dark');
+ assert.equal(h.ids['theme-toggle'].getAttribute('aria-pressed'),'true');assert.equal(h.ids['theme-status'].textContent,'Dark');
+ assert.deepEqual([...h.stored],before);
+ const restart=await harness(records,S.search,preferences);
+ assert.equal(restart.document.documentElement.getAttribute('data-theme'),'dark');assert.deepEqual([...restart.stored],before);
+ await restart.ids['theme-toggle'].click();assert.equal(preferences.get('file-search-safari-theme'),'light');
+});
+test('unavailable theme storage does not break UI or touch saved roots',async()=>{
+ const h=await harness([],S.search,new Map(),true);await h.ids['theme-toggle'].click();
+ assert.equal(h.document.documentElement.getAttribute('data-theme'),'dark');assert.match(h.ids.notice.textContent,/保存できません/);
+ await h.pick([file('Root/health.txt')]);await h.query('health');assert.equal(h.buttons().length,1);
+});
+
+test('theme changes neither rerun search nor discard live selected files',async()=>{
+ let searches=0;const h=await harness([],async(...args)=>{searches++;return S.search(...args);});
+ await h.pick([file('Root/健康.txt')]);await h.query('健康');await h.buttons()[0].click();
+ const before=structuredClone([...h.stored]),calls=searches;
+ await h.ids['settings-button'].click();await h.ids['theme-toggle'].click();
+ assert.equal(searches,calls);assert.deepEqual([...h.stored],before);
+ assert.equal(h.ids.preview.children[0].textContent,'日本語');
+ await h.ids.back.click();await h.tick();assert.equal(h.buttons().length,1);
+ assert.equal(h.buttons()[0].getAttribute('aria-pressed'),'true');
+});
+test('large subtree filtering yields and cannot append after query/root change',async()=>{
+ const h=await harness();await h.pick(Array.from({length:25000},(_,i)=>file('A/Hit/deep/unrelated'+i+'.txt')));
+ await h.pick([file('B/new.txt')]);h.ids.root.value='1';await h.ids.root.emit('change');
+ h.ids.query.value='Hit';await h.ids['search-form'].emit('submit');
+ // Allow the unchanged search engine to finish, then invalidate display work.
+ await new Promise(r=>setTimeout(r,120));
+ h.ids.root.value='2';await h.ids.root.emit('change');await h.query('new');await settle(h);
+ assert.equal(h.ids.results.children[0].children[0].textContent,'B');
+ assert.deepEqual(h.buttons().map(e=>e.textContent),['new.txt']);
 });
