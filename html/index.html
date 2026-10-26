@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src blob:; frame-src blob:; object-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Folder Search</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script defer src="search.js"></script>
+    <script defer src="filesystem.js"></script>
+    <script defer src="storage.js"></script>
+    <script defer src="app.js"></script>
+  </head>
+  <body>
+    <main>
+      <section id="search-view" aria-label="Folder Search">
+        <form id="search-form" class="toolbar">
+          <label class="target-label" for="root">Search Target</label>
+          <select id="root" aria-label="Search Target" disabled></select>
+          <div class="query-group">
+            <input
+              id="query"
+              placeholder="Enter keyword"
+              aria-label="Keyword"
+              autocomplete="off"
+            /><button id="search" type="submit" disabled>Search</button>
+          </div>
+          <button
+            class="secondary theme"
+            type="button"
+            aria-label="Toggle theme"
+          >
+            ☾
+          </button>
+          <button id="settings-button" class="secondary" type="button">
+            Settings
+          </button>
+        </form>
+        <p class="hint">
+          AND: space · OR · -exclude · "exact phrase" — folder and file names
+          only
+        </p>
+        <p id="meta" class="meta" aria-live="polite"></p>
+        <div id="results"></div>
+      </section>
+      <section id="settings-view" aria-label="Folder Manager" hidden>
+        <div class="toolbar">
+          <button id="add" disabled>Add Directory</button
+          ><button class="secondary theme" aria-label="Toggle theme">☾</button
+          ><button id="back" class="secondary">Back to Search</button>
+        </div>
+        <p class="hint">
+          Only the selected folders are read. Delete removes registration and
+          index; your files stay in place.
+        </p>
+        <div class="table-scroll">
+          <table class="settings-table">
+            <thead>
+              <tr>
+                <th>Display Name</th>
+                <th>Path (relative)</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="roots"></tbody>
+          </table>
+        </div>
+        <p id="storage-info" class="hint"></p>
+      </section>
+      <div id="notice" role="status" hidden></div>
+      <div id="progress-wrap" hidden>
+        <span id="progress" role="status"></span
+        ><button id="cancel" class="secondary">Cancel scan</button>
+      </div>
+      <p id="support" class="hint">Checking browser and local storage…</p>
+      <noscript>Enable JavaScript to use Folder Search.</noscript>
+    </main>
+  </body>
+</html>
