@@ -25,7 +25,8 @@ QUERIES = ['', ' ', 'cat', 'CAT', 'alpha beta', 'alpha OR gamma', 'cat -draft',
 class ParityTests(unittest.TestCase):
     def test_search_parser_aggregation_and_children(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root_path = Path(tmp) / 'Root'
+            # Windows TEMP can use an 8.3 alias; compare against the normalized DB root.
+            root_path = (Path(tmp) / 'Root').resolve()
             names = ['商品_cat', 'Other', 'Empty', 'Other/Nested', 'alpha beta', 'alpha draft beta',
                      'gamma delta', '日本語', '100%', 'a_b', 'Straße', 'Ä', 'Σ', '.hidden']
             for name in names:
@@ -55,7 +56,7 @@ process.stdin.on('data',x=>data+=x);process.stdin.on('end',async()=>{
  children:S.children(p.snapshot,'商品_cat',q,true).map(i=>({name:i.name,type:i.kind==='directory'?'dir':'file'}))});}
  console.log(JSON.stringify(out));});
 """
-            result = subprocess.run(['node','-e',script],input=json.dumps(payload),text=True,capture_output=True,cwd=REPO,check=True)
+            result = subprocess.run(['node','-e',script],input=json.dumps(payload),encoding='utf-8',capture_output=True,cwd=REPO,check=True)
             actual = json.loads(result.stdout)
             for q, js in zip(queries, actual):
                 with self.subTest(query=q):
