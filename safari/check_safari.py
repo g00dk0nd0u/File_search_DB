@@ -1,6 +1,7 @@
 """Development-only macOS Safari probe; Python standard library, no app server.
 Uses Apple's installed safaridriver. Folder picker and previews remain manual.
 """
+import base64
 import json
 import os
 from pathlib import Path
@@ -60,6 +61,10 @@ def open_safari():
     SESSION = result["sessionId"]
     REPORT.setdefault("capabilities", []).append(result["capabilities"])
     request("POST", "/session/" + SESSION + "/timeouts", {"script": 20000})
+    return navigate()
+
+
+def navigate():
     request("POST", "/session/" + SESSION + "/url",
             {"url": (Path(__file__).parent / "index.html").resolve().as_uri()})
     deadline = time.monotonic() + 20
@@ -70,6 +75,26 @@ def open_safari():
             break
         time.sleep(0.2)
     return log
+
+
+def evidence(label):
+    if not SESSION:
+        return
+    try:
+        screenshot = request("GET", "/session/" + SESSION + "/screenshot")
+        (ARTIFACTS / (label + ".png")).write_bytes(base64.b64decode(screenshot))
+    except Exception as error:
+        REPORT.setdefault("evidence_errors", []).append(repr(error))
+
+
+def check_hidden_results(label):
+    observed = execute("""return {
+      files: document.querySelectorAll('#files li').length,
+      preview: document.getElementById('preview').childElementCount,
+      disabled: document.getElementById('save').disabled
+    };""")
+    check(label, observed["files"] == 0 and observed["preview"] == 0 and
+          observed["disabled"], observed)
 
 
 def close_safari():
@@ -106,6 +131,7 @@ def main():
                 raise
             time.sleep(0.2)
     initial_log = open_safari()
+    evidence("initial")
     (ARTIFACTS / "initial.log").write_text(initial_log, encoding="utf-8")
     observed = execute("""return {
       protocol: location.protocol, ua: navigator.userAgent,
@@ -137,17 +163,19 @@ def main():
       };
     """.replace("MARKER", json.dumps(marker)), asynchronous=True)
     check("real IndexedDB commits synthetic metadata", written.get("committed") == marker, written)
+    # First prove the application rereads committed metadata in the same
+    # automation session. A later session reset must not erase this evidence.
+    reread_log = navigate()
+    (ARTIFACTS / "reread.log").write_text(reread_log, encoding="utf-8")
+    evidence("reread")
+    check("same-session application rereads committed marker", marker in reread_log, reread_log)
+    check_hidden_results("same-session reload hides saved synthetic file results")
     close_safari()
     restored_log = open_safari()
+    evidence("restart")
     (ARTIFACTS / "restart.log").write_text(restored_log, encoding="utf-8")
     check("automation-profile marker survives full Safari exit", marker in restored_log, restored_log)
-    observed = execute("""return {
-      files: document.querySelectorAll('#files li').length,
-      preview: document.getElementById('preview').childElementCount,
-      disabled: document.getElementById('save').disabled
-    };""")
-    check("saved metadata never restores file access or results",
-          observed["files"] == 0 and observed["preview"] == 0 and observed["disabled"], observed)
+    check_hidden_results("saved metadata never restores file access or results")
     close_safari()
 
 
@@ -155,6 +183,7 @@ try:
     main()
 except Exception as error:
     REPORT["error"] = repr(error)
+    evidence("failure")
 finally:
     if SESSION:
         try:

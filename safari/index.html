@@ -37,6 +37,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere}li{overflow-wrap:anywhere;margin
 (() => {
   const $ = id => document.getElementById(id);
   let files = [], generation = 0, previewGeneration = 0, objectURL = null;
+  let savePending = false, cancelSave = null;
   function log(message) {
     $("log").textContent += new Date().toISOString() + " " + message + "\n";
   }
@@ -48,13 +49,14 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere}li{overflow-wrap:anywhere;margin
   }
   function resetAccess() {
     generation++;
+    if (cancelSave) cancelSave();
     files = [];
     $("files").replaceChildren();
     $("save").disabled = true;
     clearPreview();
   }
   function errorText(error) { return error.name + ": " + error.message; }
-  function database(action) {
+  function database(action, isCurrent = () => true) {
     return new Promise((resolve, reject) => {
       let request;
       try { request = indexedDB.open("file-search-safari-phase0-v1", 1); }
@@ -69,16 +71,19 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere}li{overflow-wrap:anywhere;margin
       request.onsuccess = () => {
         const db = request.result;
         if (blocked) { db.close(); return; }
+        if (!isCurrent()) { db.close(); reject(new Error("選択が変わったため保存しません。")); return; }
         db.onversionchange = () => db.close();
         let tx, result;
         try {
           tx = db.transaction("metadata", action ? "readwrite" : "readonly");
+          if (action) cancelSave = () => { try { tx.abort(); } catch (_) {} };
           const store = tx.objectStore("metadata");
           const operation = action ? store.put(action, "snapshot") : store.get("snapshot");
           operation.onsuccess = () => { result = operation.result; };
         } catch (error) { db.close(); reject(error); return; }
-        tx.oncomplete = () => { db.close(); resolve(result); };
-        tx.onabort = () => { db.close(); reject(tx.error || new Error("保存が中断されました。")); };
+        const close = () => { if (action) cancelSave = null; db.close(); };
+        tx.oncomplete = () => { close(); resolve(result); };
+        tx.onabort = () => { close(); reject(tx.error || new Error("保存が中断されました。")); };
         tx.onerror = () => {}; // Abort reports the transaction error.
       };
     });
@@ -86,9 +91,19 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere}li{overflow-wrap:anywhere;margin
   async function preview(file) {
     clearPreview();
     const ticket = previewGeneration;
+    const read = async end => {
+      try { return await file.slice(0, end).arrayBuffer(); }
+      catch (error) {
+        if (ticket === previewGeneration) {
+          resetAccess();
+          log("ファイルに再アクセスできません。フォルダを再選択してください: " + errorText(error));
+        }
+        throw error;
+      }
+    };
     try {
       // Check that the current File can still be read; no cached body fallback.
-      await file.slice(0, 1).arrayBuffer();
+      await read(1);
       if (ticket !== previewGeneration) return;
       const extension = file.name.split(".").pop().toLowerCase();
       if (extension === "pdf") {
@@ -111,12 +126,18 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere}li{overflow-wrap:anywhere;margin
         image.src = objectURL;
         $("preview").append(image);
       } else {
-        const bytes = new Uint8Array(await file.slice(0, 16384).arrayBuffer());
+        const bytes = new Uint8Array(await read(16384));
         if (ticket !== previewGeneration) return;
         if (bytes.includes(0)) throw new Error("バイナリのためテキスト表示しません。");
         let text;
-        try { text = new TextDecoder("utf-8", {fatal: true}).decode(bytes); }
-        catch (_) { text = new TextDecoder("shift-jis").decode(bytes); }
+        // A prefix can end inside a multibyte character. Leave that suffix
+        // buffered instead of misclassifying valid UTF-8 as Shift-JIS.
+        const options = {stream: file.size > bytes.length};
+        try { text = new TextDecoder("utf-8", {fatal: true}).decode(bytes, options); }
+        catch (_) {
+          try { text = new TextDecoder("shift-jis", {fatal: true}).decode(bytes, options); }
+          catch (_) { text = new TextDecoder("utf-8").decode(bytes, options); }
+        }
         const pre = document.createElement("pre");
         pre.textContent = text;
         $("preview").append(pre);
@@ -168,7 +189,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere}li{overflow-wrap:anywhere;margin
         fragment.append(item);
       }
       $("files").append(fragment);
-      $("save").disabled = false;
+      $("save").disabled = savePending;
       log("選択ファイルの相対パス取得・読取確認が完了しました。日本語と階層を目視確認してください。");
     } catch (error) {
       if (ticket !== generation) return;
@@ -177,18 +198,31 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere}li{overflow-wrap:anywhere;margin
     }
   });
   $("save").addEventListener("click", async () => {
-    const ticket = generation;
-    if (!files.length) return;
+    if (!files.length || savePending) return;
+    const ticket = generation, selected = files.slice();
+    savePending = true;
     $("save").disabled = true;
-    const snapshot = {
-      savedAt: new Date().toISOString(),
-      files: files.map(file => ({path: file.webkitRelativePath, size: file.size, lastModified: file.lastModified}))
-    };
     try {
-      await database(snapshot);
-      log("IndexedDBトランザクション完了。再起動照合マーカー: " + snapshot.savedAt);
-    } catch (error) { log("保存失敗（前回データを削除しません）: " + errorText(error)); }
-    finally { if (ticket === generation && files.length) $("save").disabled = false; }
+      // Selection-time readability is not a promise of access at save time.
+      for (const file of selected) {
+        await file.slice(0, 1).arrayBuffer();
+        if (ticket !== generation) return;
+      }
+      const snapshot = {
+        savedAt: new Date().toISOString(),
+        files: selected.map(file => ({path: file.webkitRelativePath, size: file.size, lastModified: file.lastModified}))
+      };
+      await database(snapshot, () => ticket === generation);
+      if (ticket === generation)
+        log("IndexedDBトランザクション完了。再起動照合マーカー: " + snapshot.savedAt);
+    } catch (error) {
+      if (ticket !== generation) return;
+      resetAccess();
+      log("読取または保存失敗（前回データを保持）。フォルダを再選択してください: " + errorText(error));
+    } finally {
+      savePending = false;
+      $("save").disabled = !files.length;
+    }
   });
   window.addEventListener("pagehide", () => { resetAccess(); $("picker").value = ""; });
   log("Phase 0 PoC。本番検索UIは未実装です。");
