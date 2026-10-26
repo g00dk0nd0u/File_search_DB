@@ -12,7 +12,7 @@
   --border: #e2e8f0;
   --accent: #2563eb;
   --soft: #f8fafc;
-  --mark: #fde68a;
+  --mark: #ffd596;
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
@@ -23,7 +23,7 @@
   --border: #444;
   --accent: #60a5fa;
   --soft: #303030;
-  --mark: #b7791f;
+  --mark: #ffd596;
 }
 body {
   margin: 0;
@@ -233,7 +233,7 @@ select {
 }
 mark {
   background: var(--mark);
-  color: var(--text);
+  color: #30200b;
   border-radius: 2px;
 }
 .table-scroll {
@@ -303,3 +303,8 @@ td input {
     height: 430px;
   }
 }
+
+.subfolder { display: grid; grid-template-columns: 28px minmax(0, 1fr); }
+.subfolder-items { grid-column: 2; border-left: 1px solid var(--border); padding-left: 8px; }
+.subfolder-items[hidden] { display: none; }
+.more-items { margin: 8px 0; }

@@ -18,6 +18,8 @@
     rootId: "",
     theme: "light",
     expanded: [],
+    collapsed: [],
+    expansionContext: null,
     selected: {},
   };
   const urls = new Map();
@@ -108,32 +110,55 @@
   $("back").onclick = () => settings(false);
   function highlight(node, text, queryText) {
     const terms = S.terms(S.parse(queryText));
-    let plain = "";
-    // Mark original code points even when casefold expands a character (e.g. ß).
-    const folded = S.fold(text),
-      ranges = [];
-    for (const term of terms) {
-      let start = 0,
-        at;
-      while (term && (at = folded.indexOf(term, start)) !== -1) {
-        ranges.push([at, at + term.length]);
-        start = at + term.length;
-      }
-    }
+    const folded = S.fold(text), ranges = [];
+    // Search and display use the same casefold; retain offsets in the original
+    // string so expansions (ß → ss) and surrogate pairs stay intact.
+    const offsets = [];
     let offset = 0;
     for (const c of text) {
-      const end = offset + S.fold(c).length;
-      if (ranges.some(([a, b]) => a < end && b > offset)) {
-        if (plain) {
-          node.append(document.createTextNode(plain));
-          plain = "";
-        }
-        node.append(element("mark", c));
-      } else plain += c;
+      for (let i = 0; i < S.fold(c).length; i++)
+        offsets.push([offset, offset + c.length]);
+      offset += c.length;
+    }
+    for (const term of terms) {
+      let start = 0, at;
+      while (term && (at = folded.indexOf(term, start)) !== -1) {
+        ranges.push([offsets[at][0], offsets[at + term.length - 1][1]]);
+        start = at + 1; // Include overlapping occurrences.
+      }
+    }
+    ranges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const merged = [];
+    for (const range of ranges) {
+      const last = merged.at(-1);
+      if (last && range[0] <= last[1]) last[1] = Math.max(last[1], range[1]);
+      else merged.push([...range]);
+    }
+    offset = 0;
+    for (const [start, end] of merged) {
+      if (start > offset) node.append(document.createTextNode(text.slice(offset, start)));
+      node.append(element("mark", text.slice(start, end)));
       offset = end;
     }
-    if (plain) node.append(document.createTextNode(plain));
+    if (offset < text.length) node.append(document.createTextNode(text.slice(offset)));
   }
+  function expansion(key, open) {
+    ui.expanded = ui.expanded.filter((p) => p !== key);
+    ui.collapsed = ui.collapsed.filter((p) => p !== key);
+    (open ? ui.expanded : ui.collapsed).push(key);
+    saveUI();
+  }
+  function syncExpansion() {
+    const context = JSON.stringify([activeId, ui.query]);
+    if (ui.expansionContext !== null && ui.expansionContext !== context) {
+      ui.expanded = [];
+      ui.collapsed = [];
+      ui.selected = {};
+    }
+    ui.expansionContext = context;
+    saveUI();
+  }
+
   function renderRoots() {
     roots.sort(
       (a, b) =>
@@ -425,8 +450,7 @@
   function submitSearch() {
     clearTimeout(searchTimer);
     ui.query = $("query").value;
-    ui.expanded = [];
-    ui.selected = {};
+    syncExpansion();
     saveUI();
     showResults().catch(fail);
   }
@@ -582,31 +606,80 @@
     root,
     queryText,
     onSelect,
+    tree,
+    depth = 0,
   ) {
     if (!items.length)
       container.append(element("p", "No items to display.", "hint"));
-    for (const item of items) {
-      const b = element(
-        "button",
-        undefined,
-        "link item" +
-          (item.kind === "file" && S.matches(item.name, S.parse(queryText))
-            ? " file-match"
-            : ""),
-      );
-      if (item.kind === "directory") b.append(document.createTextNode("/"));
-      highlight(b, item.name, queryText);
-      b.onclick = () => {
-        if (onSelect) onSelect(item.path);
-        for (const child of container.querySelectorAll(".selected"))
-          child.classList.remove("selected");
-        b.classList.add("selected");
-        preview(item, pane, localSnapshot, root, queryText);
-      };
-      container.append(b);
-    }
+    let cursor = 0;
+    const more = element("button", "Show more items", "secondary more-items");
+    const render = () => {
+      more.hidden = true;
+      let count = 0;
+      while (cursor < items.length && count < 100 && (!tree || tree.budget.left > 0)) {
+        const item = items[cursor++];
+        count++;
+        if (tree) tree.budget.left--;
+        const b = element(
+          "button",
+          undefined,
+          "link item" +
+            (item.kind === "file" && S.matches(item.name, S.parse(queryText))
+              ? " file-match"
+              : ""),
+        );
+        if (item.kind === "directory") b.append(document.createTextNode("/"));
+        highlight(b, item.name, queryText);
+        b.onclick = () => {
+          if (onSelect) onSelect(item.path);
+          for (const child of container.querySelectorAll(".selected"))
+            child.classList.remove("selected");
+          b.classList.add("selected");
+          preview(item, pane, localSnapshot, root, queryText);
+        };
+        if (tree && item.kind === "directory") {
+          const group = element("div", undefined, "subfolder"),
+            toggle = element("button", "▸", "link subfolder-toggle"),
+            children = element("div", undefined, "subfolder-items"),
+            key = JSON.stringify([tree.rowPath, item.path]);
+          toggle.setAttribute("aria-label", `Expand / collapse ${item.name}`);
+          children.hidden = true;
+          let populated = false;
+          const setOpen = (open) => {
+            children.hidden = !open;
+            toggle.textContent = open ? "▾" : "▸";
+            toggle.setAttribute("aria-expanded", String(open));
+            if (open && !populated) {
+              populated = true;
+              listItems(children, tree.children.get(item.path) || [], pane,
+                localSnapshot, root, queryText, onSelect, tree, depth + 1);
+            }
+          };
+          toggle.onclick = () => {
+            const open = children.hidden;
+            expansion(key, open);
+            tree.budget.left = Math.max(tree.budget.left, 100);
+            setOpen(open);
+          };
+          group.append(toggle, b, children);
+          container.append(group);
+          setOpen(!ui.collapsed.includes(key) && (depth < 3 || ui.expanded.includes(key)));
+        } else container.append(b);
+      }
+      if (cursor < items.length) {
+        more.hidden = false;
+        container.append(more);
+      }
+    };
+    more.onclick = () => {
+      if (tree) tree.budget.left = 100;
+      render();
+    };
+    render();
   }
   async function showResults() {
+    if (composing) return;
+    syncExpansion();
     const version = ++generation,
       root = activeRoot(),
       localSnapshot = snapshot,
@@ -647,13 +720,46 @@
     $("meta").textContent = queryText.trim()
       ? `${rows.length} folders${rows.length === 100 ? " (maximum 100 shown)" : ""} · ${root.displayName}`
       : "Enter a keyword to search.";
+    // Build once per render rather than rescanning the full index per tree node.
+    const children = new Map(), byPath = new Map(), budget = { left: 500 };
+    let indexed = 0;
+    for (const [entries, kind] of [[localSnapshot.folders, "directory"], [localSnapshot.files, "file"]]) {
+      for (const item of rows.length ? entries : []) {
+        if (item.path === "") continue;
+        if (!children.has(item.parent)) children.set(item.parent, []);
+        const child = { ...item, kind };
+        children.get(item.parent).push(child);
+        byPath.set(item.path, child);
+        if (++indexed % 500 === 0) {
+          await S.pause();
+          if (version !== generation) return;
+        }
+      }
+    }
+    for (const items of children.values()) items.sort((a, b) =>
+      (a.kind === b.kind ? 0 : a.kind === "directory" ? -1 : 1) ||
+      S.compare(S.fold(a.name), S.fold(b.name)));
+    // Building the child index yields too: permissions/root/query may have
+    // changed since the check after search. Never publish stale/denied results.
+    const renderAllowed = await readable(root);
+    if (version !== generation) return;
+    if (!renderAllowed || blocked.has(root.id)) {
+      hideDenied(root);
+      return;
+    }
+    const query = S.parse(queryText);
     for (const row of rows) {
       const article = element("article", undefined, "result"),
         header = element("div", undefined, "result-header");
       const toggle = element("button", undefined, "link folder-toggle");
       const parent = row.path.split("/").slice(0, -1).join("/");
-      if (parent) toggle.append(element("span", parent + " / ", "path"));
-      toggle.append(document.createTextNode("▸ "));
+      if (parent) {
+        const path = element("span", undefined, "path");
+        highlight(path, parent + " / ", queryText);
+        toggle.append(path);
+      }
+      const arrow = element("span", "▸ ");
+      toggle.append(arrow);
       highlight(toggle, row.name, queryText);
       const detail = element("div", undefined, "detail");
       detail.hidden = true;
@@ -672,22 +778,18 @@
       article.append(header, detail);
       $("results").append(article);
       let populated = false;
-      const expand = () => {
-        detail.hidden = !detail.hidden;
+      const expand = (open) => {
+        detail.hidden = !open;
+        arrow.textContent = open ? "▾ " : "▸ ";
         toggle.setAttribute("aria-expanded", String(!detail.hidden));
-        ui.expanded = ui.expanded.filter((p) => p !== row.path);
-        if (!detail.hidden) ui.expanded.push(row.path);
-        saveUI();
+
         if (!detail.hidden && !populated) {
           populated = true;
           listItems(
             left,
-            S.children(
-              localSnapshot,
-              row.path,
-              queryText,
-              row.folderNameMatched,
-            ),
+            (children.get(row.path) || []).filter((item) =>
+              item.kind === "directory" || !queryText.trim() ||
+              (query.groups.length && S.matches(item.name, query)) || row.folderNameMatched),
             pane,
             localSnapshot,
             root,
@@ -696,13 +798,9 @@
               ui.selected[row.path] = path;
               saveUI();
             },
+            { children, budget, rowPath: row.path },
           );
-          const selected = S.children(
-            localSnapshot,
-            row.path,
-            queryText,
-            row.folderNameMatched,
-          ).find((i) => i.path === ui.selected[row.path]);
+          const selected = byPath.get(ui.selected[row.path]);
           // Restore selection without requesting permission outside a user gesture.
           if (selected)
             paneMessage(
@@ -716,8 +814,13 @@
         }
       };
       toggle.setAttribute("aria-expanded", "false");
-      toggle.onclick = expand;
-      if (ui.expanded.includes(row.path)) expand();
+      toggle.onclick = () => {
+        const open = detail.hidden;
+        expansion(row.path, open);
+        budget.left = Math.max(budget.left, 100);
+        expand(open);
+      };
+      expand(!ui.collapsed.includes(row.path));
     }
     autoRefresh(root);
   }
