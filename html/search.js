@@ -471,7 +471,7 @@
     );
     return results.slice(0, limit);
   }
-  function children(snapshot, path, queryText = "", folderNameMatched = false) {
+  function children(snapshot, path, queryText = "") {
     const query = parse(queryText),
       hasQuery = !!queryText.trim();
     return [
@@ -485,8 +485,7 @@
       .filter(
         (item) =>
           !hasQuery ||
-          (query.groups.length && matches(item.name, query)) ||
-          (folderNameMatched && item.kind === "file"),
+          (query.groups.length && matches(item.name, query)),
       )
       .sort(
         (a, b) =>

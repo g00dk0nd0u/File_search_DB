@@ -87,13 +87,18 @@
     }
   }
   function clearPreviews() {
+    const pane = $("preview");
+    pane._request = null;
     for (const pane of urls.keys()) revoke(pane);
+    paneMessage(pane, "Select a file to preview it here.");
   }
   function saveUI() {
     if (db) db.put("settings", "ui", ui).catch(fail);
   }
   function theme() {
     document.documentElement.dataset.theme = ui.theme;
+    for (const button of document.querySelectorAll(".theme"))
+      button.setAttribute("aria-pressed", String(ui.theme === "dark"));
   }
   for (const button of document.querySelectorAll(".theme"))
     button.onclick = () => {
@@ -461,6 +466,7 @@
   $("query").oninput = () => {
     clearTimeout(searchTimer);
     ++generation;
+    clearPreviews();
     ui.query = $("query").value;
     if (!composing) searchTimer = setTimeout(submitSearch, 250);
   };
@@ -476,40 +482,14 @@
     revoke(pane);
     pane.replaceChildren(element("p", text, "hint"));
   }
-  async function preview(item, pane, localSnapshot, root, queryText) {
+  async function preview(item, pane, root) {
     const token = {};
     pane._request = token;
-    if (item.kind === "directory") {
-      revoke(pane);
-      pane.replaceChildren(element("h2", item.name + "/", "preview-title"));
-      const back = element("button", "← Parent folder", "secondary");
-      back.onclick = () =>
-        preview(
-          {
-            name: item.parent || root.directoryName,
-            path: item.parent || "",
-            parent: item.parent?.split("/").slice(0, -1).join("/") || "",
-            kind: "directory",
-          },
-          pane,
-          localSnapshot,
-          root,
-          queryText,
-        );
-      if (item.path) pane.append(back);
-      listItems(
-        pane,
-        S.children(localSnapshot, item.path),
-        pane,
-        localSnapshot,
-        root,
-        queryText,
-      );
-      return;
-    }
     paneMessage(pane, "Loading…");
     try {
-      if (!(await readable(root))) {
+      const allowed = await readable(root);
+      if (pane._request !== token) return;
+      if (!allowed) {
         hideDenied(root);
         return;
       }
@@ -590,7 +570,10 @@
         }
       }
     } catch (e) {
-      if (accessError(e) || !(await readable(root))) hideDenied(root);
+      if (pane._request !== token) return;
+      const allowed = await readable(root);
+      if (pane._request !== token) return;
+      if (accessError(e) || !allowed) hideDenied(root);
       if (pane.isConnected && pane._request === token)
         paneMessage(
           pane,
@@ -632,11 +615,19 @@
         highlight(b, item.name, queryText);
         b.onclick = () => {
           if (onSelect) onSelect(item.path);
-          for (const child of container.querySelectorAll(".selected"))
+          for (const child of $("results").querySelectorAll(".item")) {
             child.classList.remove("selected");
+            child.setAttribute("aria-pressed", "false");
+          }
           b.classList.add("selected");
-          preview(item, pane, localSnapshot, root, queryText);
+          b.setAttribute("aria-pressed", "true");
+          preview(item, pane, root);
         };
+        if (item.kind === "file") {
+          const selected = Object.values(ui.selected).includes(item.path);
+          b.setAttribute("aria-pressed", String(selected));
+          if (selected) b.classList.add("selected");
+        }
         if (tree && item.kind === "directory") {
           const group = element("div", undefined, "subfolder"),
             toggle = element("button", "▸", "link subfolder-toggle"),
@@ -661,6 +652,7 @@
             tree.budget.left = Math.max(tree.budget.left, 100);
             setOpen(open);
           };
+          b.onclick = () => toggle.onclick();
           group.append(toggle, b, children);
           container.append(group);
           setOpen(!ui.collapsed.includes(key) && (depth < 3 || ui.expanded.includes(key)));
@@ -717,15 +709,33 @@
       hideDenied(root);
       return;
     }
-    $("meta").textContent = queryText.trim()
-      ? `${rows.length} folders${rows.length === 100 ? " (maximum 100 shown)" : ""} · ${root.displayName}`
-      : "Enter a keyword to search.";
+    $("meta").textContent = rows.length || !queryText.trim() ? "" : "No matching folders or files.";
     // Build once per render rather than rescanning the full index per tree node.
     const children = new Map(), byPath = new Map(), budget = { left: 500 };
+    const query = S.parse(queryText), visible = new Set();
+    // Display filtering is separate from Python-compatible folder aggregation.
+    // Retain matches and their ancestors, never all children of a name hit.
+    let checked = 0;
+    for (const [entries, kind] of [[localSnapshot.folders, "directory"], [localSnapshot.files, "file"]]) {
+      for (const item of rows.length ? entries : []) {
+        if ((kind === "directory" || query.groups.length) && S.matches(item.name, query)) {
+          let path = item.path;
+          while (!visible.has(path)) {
+            visible.add(path);
+            if (!path) break;
+            path = path.split("/").slice(0, -1).join("/");
+          }
+        }
+        if (++checked % 500 === 0) {
+          await S.pause();
+          if (version !== generation) return;
+        }
+      }
+    }
     let indexed = 0;
     for (const [entries, kind] of [[localSnapshot.folders, "directory"], [localSnapshot.files, "file"]]) {
       for (const item of rows.length ? entries : []) {
-        if (item.path === "") continue;
+        if (item.path === "" || !visible.has(item.path)) continue;
         if (!children.has(item.parent)) children.set(item.parent, []);
         const child = { ...item, kind };
         children.get(item.parent).push(child);
@@ -747,7 +757,12 @@
       hideDenied(root);
       return;
     }
-    const query = S.parse(queryText);
+    const pane = $("preview");
+    const selected = Object.values(ui.selected).map(path => byPath.get(path)).find(item => item?.kind === "file");
+    if (selected) paneMessage(pane, `Previously selected: ${selected.name}. Select it again to preview.`);
+    // Drop selections that disappeared after a refresh or no longer match.
+    ui.selected = Object.fromEntries(Object.entries(ui.selected).filter(([, path]) => byPath.get(path)?.kind === "file"));
+    saveUI();
     for (const row of rows) {
       const article = element("article", undefined, "result"),
         header = element("div", undefined, "result-header");
@@ -763,18 +778,9 @@
       highlight(toggle, row.name, queryText);
       const detail = element("div", undefined, "detail");
       detail.hidden = true;
-      const left = element("div", undefined, "children"),
-        pane = element("div", undefined, "preview");
-      paneMessage(pane, "Select a file to preview it here.");
-      detail.append(left, pane);
-      header.append(
-        toggle,
-        element(
-          "span",
-          row.fileMatchCount ? `${row.fileMatchCount} files` : "",
-          "badge",
-        ),
-      );
+      const left = element("div", undefined, "children");
+      detail.append(left);
+      header.append(toggle);
       article.append(header, detail);
       $("results").append(article);
       let populated = false;
@@ -787,30 +793,17 @@
           populated = true;
           listItems(
             left,
-            (children.get(row.path) || []).filter((item) =>
-              item.kind === "directory" || !queryText.trim() ||
-              (query.groups.length && S.matches(item.name, query)) || row.folderNameMatched),
+            children.get(row.path) || [],
             pane,
             localSnapshot,
             root,
             queryText,
             (path) => {
-              ui.selected[row.path] = path;
+              ui.selected = { [row.path]: path };
               saveUI();
             },
             { children, budget, rowPath: row.path },
           );
-          const selected = byPath.get(ui.selected[row.path]);
-          // Restore selection without requesting permission outside a user gesture.
-          if (selected)
-            paneMessage(
-              pane,
-              `Previously selected: ${selected.name}. Select it again to preview.`,
-            );
-        }
-        if (detail.hidden) {
-          pane._request = null;
-          paneMessage(pane, "Select a file to preview it here.");
         }
       };
       toggle.setAttribute("aria-expanded", "false");
@@ -841,7 +834,7 @@
       : roots[0]?.id || "";
     $("support").textContent =
       window.showDirectoryPicker && window.isSecureContext
-        ? "Local HTML edition · read-only folder access · index stored in this Edge profile"
+        ? ""
         : "Folder selection is unavailable. Open this file in Windows Edge and check browser policies. Read access is required to search saved indexes.";
     $("storage-info").textContent =
       "Absolute paths are not exposed by the browser. Keep this HTML folder in the same location and use the same Edge profile. Clearing browser data deletes this index.";

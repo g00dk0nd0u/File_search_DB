@@ -53,7 +53,7 @@ const S=require('./html/search.js');let data='';process.stdin.setEncoding('utf8'
 process.stdin.on('data',x=>data+=x);process.stdin.on('end',async()=>{
  const p=JSON.parse(data),out=[];
  for(const q of p.queries){out.push({parsed:S.parse(q),rows:await S.search(p.snapshot,q),
- children:S.children(p.snapshot,'商品_cat',q,true).map(i=>({name:i.name,type:i.kind==='directory'?'dir':'file'}))});}
+ children:S.children(p.snapshot,'商品_cat',q,false).map(i=>({name:i.name,type:i.kind==='directory'?'dir':'file'}))});}
  console.log(JSON.stringify(out));});
 """
             result = subprocess.run(['node','-e',script],input=json.dumps(payload),encoding='utf-8',capture_output=True,cwd=REPO,check=True)
@@ -68,7 +68,9 @@ process.stdin.on('data',x=>data+=x);process.stdin.on('end',async()=>{
                                      matchedFileNames=list(r.matched_file_names),matchedFilePaths=[relative(p) for p in r.matched_file_paths]) for r in py_rows]
                     keys = ['path','name','depth','folderNameMatched','fileMatchCount','matchKind','matchedFileNames','matchedFilePaths']
                     self.assertEqual([{k:r[k] for k in keys} for r in js['rows']],expected)
-                    py_children = FileSearchHandler._collect_children_items(root_path/'商品_cat',q,True)
+                    # Compare display filtering to Python without its all-files override.
+                    # Folder aggregation above remains fully identical.
+                    py_children = FileSearchHandler._collect_children_items(root_path/'商品_cat',q,False)
                     self.assertEqual(js['children'],[dict(name=c['name'],type=c['type']) for c in py_children])
             conn.close()
 

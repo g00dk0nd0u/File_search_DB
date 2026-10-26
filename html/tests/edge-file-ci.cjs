@@ -174,10 +174,7 @@ async function openPage(definition, restart) {
           { timeout: 15000 },
         );
         assert.equal(await page.locator("#notice").isVisible(), false);
-        assert.match(
-          await page.locator("#support").innerText(),
-          /Local HTML edition/,
-        );
+        assert.equal(await page.locator("#support").isVisible(), false);
       } else {
         await page.waitForFunction(
           () =>
@@ -374,8 +371,11 @@ async function appUIForRestart(page, label) {
     "real Edge UI + IndexedDB",
     async () => {
       await page.locator("#query").fill("CI 永続化");
+      await page.locator("#settings-button").click();
       if ((await page.locator("html").getAttribute("data-theme")) !== "dark")
-        await page.locator("#search-view .theme").click();
+        await page.locator("#settings-view .theme").click();
+      assert.equal(await page.locator(".theme").getAttribute("aria-pressed"), "true");
+      await page.locator("#back").click();
       // waitForFunction polls synchronously; an async predicate is a truthy
       // Promise even when its eventual value is false. Poll the actual completed
       // IndexedDB transaction from Node and assert its value before closing Edge.
@@ -399,6 +399,75 @@ async function appUIForRestart(page, label) {
     },
     page,
   );
+}
+async function compactUI() {
+  const page = await context.newPage();
+  const diagnostics = watch(page, "compact-ui-synthetic-data");
+  await page.addInitScript(() => {
+    const snapshot = {
+      folders: [{name:"健康",path:"",parent:null,depth:0},{name:"sub",path:"sub",parent:"",depth:1}],
+      files: [
+        {name:"健康保険証.txt",path:"健康保険証.txt",parent:""},
+        {name:"旅行写真.jpg",path:"旅行写真.jpg",parent:""},
+        {name:"健康診断.txt",path:"sub/健康診断.txt",parent:"sub"},
+      ],
+    };
+    const root = {id:"fixture",displayName:"健康",directoryName:"健康",handle:{
+      queryPermission: async()=>"granted",
+      async *entries() { await new Promise(()=>{}); },
+    }};
+    let saved = {query:"健康",rootId:"fixture",theme:"light"};
+    Object.defineProperty(window,"FolderStore",{configurable:true,set(store){
+      Object.defineProperty(window,"FolderStore",{value:{...store,open:async()=>({
+        roots:async()=>[root], get:async(type)=>type==="settings"?saved:snapshot,
+        put:async(type,_,value)=>{if(type==="settings") saved=structuredClone(value);},
+      })}});
+    }});
+    Object.defineProperty(window,"FolderFS",{configurable:true,set(api){
+      Object.defineProperty(window,"FolderFS",{value:{...api,fileAt:async(_,path)=>
+        Object.assign(new Blob([path]),{name:path.split("/").at(-1)})}});
+    }});
+  });
+  await check("compact workspace, shared preview and responsive layout", "real Edge file:// with synthetic handles/data", async()=>{
+    await page.goto(fileURL("html/index.html"));
+    await page.waitForFunction(()=>document.querySelectorAll(".item").length>=2);
+    assert.equal(await page.title(),"Folder Search");
+    assert.equal(await page.locator(".preview").count(),1);
+    assert.equal(await page.locator("#search-view .theme").count(),0);
+    assert.doesNotMatch(await page.locator("#results").innerText(),/旅行写真/);
+    assert.equal(await page.locator("#meta").innerText(),"");
+    const layout = await page.evaluate(()=>{
+      const rect=id=>document.getElementById(id).getBoundingClientRect().toJSON();
+      return {preview:rect("preview"),panel:document.querySelector("aside").getBoundingClientRect().toJSON(),results:rect("results"),
+        font:parseFloat(getComputedStyle(document.body).fontSize),
+        pad:parseFloat(getComputedStyle(document.querySelector(".item")).paddingTop)};
+    });
+    assert(layout.panel.x<layout.results.x);
+    assert(Math.abs(layout.panel.width/layout.results.width-2)<0.03);
+    assert(layout.panel.height>=270);
+    assert(layout.font>=13.5 && layout.font<=14);
+    assert(layout.pad>=3 && layout.pad<=4);
+    const first=page.getByRole("button",{name:"健康保険証.txt",exact:true});
+    await first.click();
+    await page.waitForFunction(()=>document.querySelector("#preview pre")?.textContent.includes("健康保険証"));
+    await page.getByRole("button",{name:"健康診断.txt",exact:true}).first().click();
+    await page.waitForFunction(()=>document.querySelector("#preview pre")?.textContent.includes("健康診断"));
+    assert.equal(await page.locator('.item[aria-pressed="true"]').count(),1);
+    assert(await page.locator("#results mark").count()>0);
+    await evidence(page,"compact-shared-preview-desktop");
+    await page.locator("#settings-button").click();
+    await page.getByRole("button",{name:"Dark Mode",exact:true}).click();
+    assert.equal(await page.locator("html").getAttribute("data-theme"),"dark");
+    await page.locator("#back").click();
+    await evidence(page,"compact-dark-desktop");
+    await page.setViewportSize({width:480,height:800});
+    const rects=await page.evaluate(()=>[document.querySelector("aside"),document.getElementById("results")].map(n=>n.getBoundingClientRect().toJSON()));
+    assert(rects[1].y>=rects[0].bottom);
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+    await evidence(page,"compact-mobile");
+    assert.deepEqual(diagnostics.errors,[]);
+  },page);
+  await page.close();
 }
 async function closeEdge() {
   // CDP only reads process IDs. Browser.close closes this browser normally.
@@ -497,6 +566,7 @@ async function main() {
       },
     );
     if (!launched) break;
+    if (!restart) await compactUI();
     for (const definition of pages) {
       const { page, state, ready, label } = await openPage(definition, restart);
       if (ready) {
