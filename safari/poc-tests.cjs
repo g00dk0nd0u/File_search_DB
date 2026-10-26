@@ -172,7 +172,7 @@ if (typeof module !== "undefined") module.exports = runPoCTests;
 if (typeof require !== "undefined" && require.main === module) {
   const fs = require("node:fs");
   const path = require("node:path");
-  const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+  const html = fs.readFileSync(path.join(__dirname, "phase0.html"), "utf8");
   const script = html.match(/<script>\n([\s\S]*?)<\/script>/)[1];
   // Keep the process alive and fail if an unresolved async regression stalls.
   const timeout = setTimeout(() => {

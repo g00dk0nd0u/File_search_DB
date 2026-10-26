@@ -61,23 +61,27 @@ def check(name, condition, detail=None):
         raise AssertionError(name + ": " + str(detail))
 
 
-def open_safari():
+def open_safari(target="phase0.html"):
     global SESSION
     result = request("POST", "/session", {"capabilities": {"alwaysMatch": {"browserName": "safari"}}})
     SESSION = result["sessionId"]
     REPORT.setdefault("capabilities", []).append(result["capabilities"])
     request("POST", "/session/" + SESSION + "/timeouts", {"script": 20000, "pageLoad": 20000, "implicit": 0})
-    return navigate()
+    return navigate(target)
 
 
-def navigate():
+def navigate(target="phase0.html"):
     request("POST", "/session/" + SESSION + "/url",
-            {"url": (Path(__file__).parent / "index.html").resolve().as_uri()})
+            {"url": (Path(__file__).parent / target).resolve().as_uri()})
     deadline = time.monotonic() + 20
     log = ""
     while time.monotonic() < deadline:
         log = execute("return document.getElementById('log')?.textContent || '';")
-        if "保存マーカー" in log or "IndexedDB読出失敗" in log:
+        if target == "index.html":
+            ready = execute("const b = document.getElementById('settings-button'); return !!b && !b.disabled;")
+            if ready:
+                return execute("return document.getElementById('meta')?.textContent || '';")
+        elif "保存マーカー" in log or "IndexedDB読出失敗" in log:
             break
         time.sleep(0.2)
     return log
@@ -136,7 +140,7 @@ def main():
             if time.monotonic() >= deadline or SERVICE.poll() is not None:
                 raise
             time.sleep(0.2)
-    target = (Path(__file__).parent / "index.html").resolve()
+    target = (Path(__file__).parent / "phase0.html").resolve()
     check("PoC file exists on runner", target.is_file(), str(target))
     initial_log = open_safari()
     REPORT["initial_page"] = execute("""return {
@@ -190,6 +194,48 @@ def main():
     (ARTIFACTS / "restart.log").write_text(restored_log, encoding="utf-8")
     check("automation-profile marker survives full Safari exit", marker in restored_log, restored_log)
     check_hidden_results("saved metadata never restores file access or results")
+    close_safari()
+    # Production coverage is additional; retain every original PoC acceptance check.
+    production_log = open_safari("index.html")
+    (ARTIFACTS / "production-initial.log").write_text(production_log, encoding="utf-8")
+    production_identity = execute("return {href: location.href, title: document.title, settings: !!document.getElementById('settings-button')};")
+    evidence("production-initial")
+    check("production app loads directly", production_identity["settings"] and
+          production_identity["title"] == "Folder Search — Safari", production_identity)
+    production_marker = str(uuid.uuid4())
+    committed = execute("""
+      const done = arguments[arguments.length - 1];
+      const r = indexedDB.open('file-search-safari-v1', 1);
+      r.onerror = () => done({error: String(r.error)});
+      r.onsuccess = () => {
+        const db = r.result, tx = db.transaction('roots', 'readwrite');
+        tx.objectStore('roots').put({id: 'ci-synthetic', displayName: MARKER,
+          rootName: 'CI合成データ', savedAt: MARKER,
+          snapshot: {folders: [{path:'', name:'CI合成データ', parent:null, depth:0}],
+            files: [{path:'old.txt', name:'old.txt', parent:''}]}});
+        tx.oncomplete = () => { db.close(); done({committed: MARKER}); };
+        tx.onabort = () => { db.close(); done({error: String(tx.error)}); };
+      };
+    """.replace("MARKER", json.dumps(production_marker)), asynchronous=True)
+    check("production real IndexedDB commits synthetic complete record",
+          committed.get("committed") == production_marker, committed)
+    for stage in ("reload", "restart"):
+        if stage == "restart":
+            close_safari()
+            production_log = open_safari("index.html")
+        else:
+            production_log = navigate("index.html")
+        observed = execute("""return {
+          roots: [...document.querySelectorAll('#root option')].map(e => e.textContent),
+          results: document.getElementById('results').childElementCount,
+          preview: document.getElementById('preview').childElementCount,
+          disabled: document.getElementById('search').disabled
+        };""")
+        (ARTIFACTS / ("production-" + stage + ".log")).write_text(production_log, encoding="utf-8")
+        evidence("production-" + stage)
+        check("production " + stage + " restores registration only",
+              production_marker in observed["roots"] and observed["results"] == 0 and
+              observed["preview"] == 0 and observed["disabled"], observed)
     close_safari()
 
 

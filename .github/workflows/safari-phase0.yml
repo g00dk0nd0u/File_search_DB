@@ -33,6 +33,10 @@ jobs:
           node-version: "22"
       - name: PoC synthetic regression tests (native Node decoder)
         run: node safari/poc-tests.cjs 2>&1 | tee "$SAFARI_ARTIFACTS/poc-tests.log"
+      - name: Safari production logic and Python parity tests
+        run: |
+          node --test safari/tests/core-tests.cjs safari/tests/app-tests.cjs 2>&1 | tee "$SAFARI_ARTIFACTS/production-tests.log"
+          python3 -m unittest discover -s safari/tests -v 2>&1 | tee "$SAFARI_ARTIFACTS/parity-tests.log"
       - name: Python syntax and existing regression tests
         run: |
           python3 -m py_compile safari/check_safari.py

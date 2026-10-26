@@ -3,237 +3,35 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src blob:; frame-src blob:; object-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'">
-<title>Safari Phase 0 検証</title>
-<style>
-body{font:16px system-ui,sans-serif;line-height:1.6;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#18252b;background:#f5f7f8}
-h1{font-size:1.6rem}button,input{font:inherit;max-width:100%}button{cursor:pointer;padding:.4rem .7rem}
-section{background:white;padding:1rem;margin:1rem 0;border:1px solid #bdcbd0;border-radius:8px}
-pre{white-space:pre-wrap;overflow-wrap:anywhere}li{overflow-wrap:anywhere;margin:.3rem 0}
-#files{max-height:24rem;overflow:auto}iframe{width:100%;height:65vh;border:0}img{max-width:100%;max-height:65vh}#log{font-size:.85rem}
-</style>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src blob:; frame-src blob:; object-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Folder Search — Safari</title>
+<link rel="stylesheet" href="styles.css">
+<script defer src="search.js"></script>
+<script defer src="core.js"></script>
+<script defer src="app.js"></script>
 </head>
 <body>
-<h1>Safari Phase 0 検証用PoC</h1>
-<p><strong>macOS Safari実機は未検証です。本番検索アプリではありません。</strong></p>
-<p>このHTMLをSafariで直接開き、フォルダ選択・相対パス・プレビュー・IndexedDBを確認します。
-再起動後はフォルダの再選択が必要です。無操作の再走査はできません。空フォルダの列挙は保証できません。</p>
-<section aria-labelledby="select-title">
-<h2 id="select-title">1. フォルダ選択</h2>
-<label>検証用フォルダ <input id="picker" type="file" webkitdirectory multiple></label>
-<p>再選択開始時に前回の一覧とプレビューを隠します。キャンセル後も旧一覧を表示しません。</p>
-<ul id="files" aria-label="今回選択したファイルの相対パス"></ul>
-<button id="save" type="button" disabled>2. 選択一覧のメタデータをIndexedDBに保存して検証</button>
-<p>ファイル本文は保存しません。保存後、ログのマーカーを控えてSafariを完全終了し、同じHTMLを再度開いて照合してください。</p>
+<main>
+<section id="search-view" aria-label="Folder Search">
+<form id="search-form" class="toolbar">
+<label for="root">Search Target</label><select id="root" disabled></select>
+<div class="query-group"><input id="query" aria-label="検索キーワード" placeholder="Enter keyword" autocomplete="off"><button id="search" disabled>Search</button></div>
+<button id="reselect" type="button" class="secondary" disabled>フォルダ再選択</button>
+<button id="settings-button" type="button" class="secondary" disabled>Settings</button>
+</form>
+<p class="hint">AND: 空白 · OR · -除外 · "フレーズ" — ファイル名・フォルダ名を検索</p>
+<p id="meta" role="status">登録情報を読み込んでいます…</p>
+<div class="workspace"><div id="results" aria-label="検索結果"></div><aside aria-label="プレビュー"><h2 id="preview-title">Preview</h2><div id="preview"><p class="hint">ファイルを選択してください。</p></div></aside></div>
 </section>
-<section aria-labelledby="preview-title">
-<h2 id="preview-title">3. プレビュー（上のファイル名を選択）</h2>
-<p>PDFはSafari内蔵表示を目視確認。画像はブラウザ対応形式。その他は先頭16 KiBのテキスト候補です。</p>
-<div id="preview"></div>
+<section id="settings-view" aria-label="Folder Manager" hidden>
+<div class="toolbar"><h1>Settings</h1><button id="add" disabled>Add Directory</button><button id="back" class="secondary">Back to Search</button></div>
+<p class="hint">登録先への再選択は、選んだフォルダでその登録を置き換えます。同名でも同じ実体とは確認できません。登録削除で実ファイルは削除されません。</p>
+<div class="table-scroll"><table><thead><tr><th>Display Name</th><th>選択フォルダ名（絶対パス取得不可）</th><th>Status</th><th>Actions</th></tr></thead><tbody id="roots"></tbody></table></div>
 </section>
-<section><h2>検証ログ</h2><pre id="log" role="log" aria-live="polite"></pre></section>
-<script>
-"use strict";
-(() => {
-  const $ = id => document.getElementById(id);
-  let files = [], generation = 0, previewGeneration = 0, objectURL = null;
-  let savePending = false, cancelSave = null;
-  function log(message) {
-    $("log").textContent += new Date().toISOString() + " " + message + "\n";
-  }
-  function clearPreview() {
-    previewGeneration++;
-    $("preview").replaceChildren();
-    if (objectURL) URL.revokeObjectURL(objectURL);
-    objectURL = null;
-  }
-  function resetAccess() {
-    generation++;
-    if (cancelSave) cancelSave();
-    files = [];
-    $("files").replaceChildren();
-    $("save").disabled = true;
-    clearPreview();
-  }
-  function errorText(error) { return error.name + ": " + error.message; }
-  function database(action, isCurrent = () => true) {
-    return new Promise((resolve, reject) => {
-      let request;
-      try { request = indexedDB.open("file-search-safari-phase0-v1", 1); }
-      catch (error) { reject(error); return; }
-      let blocked = false;
-      request.onupgradeneeded = () => request.result.createObjectStore("metadata");
-      request.onerror = () => reject(request.error);
-      request.onblocked = () => {
-        blocked = true;
-        reject(new Error("保存領域がブロックされています。他のPoCタブを閉じてください。"));
-      };
-      request.onsuccess = () => {
-        const db = request.result;
-        if (blocked) { db.close(); return; }
-        if (!isCurrent()) { db.close(); reject(new Error("選択が変わったため保存しません。")); return; }
-        db.onversionchange = () => db.close();
-        let tx, result;
-        try {
-          tx = db.transaction("metadata", action ? "readwrite" : "readonly");
-          if (action) cancelSave = () => { try { tx.abort(); } catch (_) {} };
-          const store = tx.objectStore("metadata");
-          const operation = action ? store.put(action, "snapshot") : store.get("snapshot");
-          operation.onsuccess = () => { result = operation.result; };
-        } catch (error) { db.close(); reject(error); return; }
-        const close = () => { if (action) cancelSave = null; db.close(); };
-        tx.oncomplete = () => { close(); resolve(result); };
-        tx.onabort = () => { close(); reject(tx.error || new Error("保存が中断されました。")); };
-        tx.onerror = () => {}; // Abort reports the transaction error.
-      };
-    });
-  }
-  async function preview(file) {
-    clearPreview();
-    const ticket = previewGeneration;
-    const read = async end => {
-      try { return await file.slice(0, end).arrayBuffer(); }
-      catch (error) {
-        if (ticket === previewGeneration) {
-          resetAccess();
-          log("ファイルに再アクセスできません。フォルダを再選択してください: " + errorText(error));
-        }
-        throw error;
-      }
-    };
-    try {
-      // Check that the current File can still be read; no cached body fallback.
-      await read(1);
-      if (ticket !== previewGeneration) return;
-      const extension = file.name.split(".").pop().toLowerCase();
-      if (extension === "pdf") {
-        objectURL = URL.createObjectURL(new Blob([file], {type: "application/pdf"}));
-        const frame = document.createElement("iframe");
-        frame.title = file.name;
-        frame.src = objectURL;
-        $("preview").append(frame);
-        log("PDF表示を要求しました。描画成功は目視確認してください: " + file.webkitRelativePath);
-      } else if (/^(png|jpe?g|gif|webp|bmp|avif|heic|heif|tiff?)$/.test(extension)) {
-        objectURL = URL.createObjectURL(file);
-        const image = document.createElement("img");
-        image.alt = file.name;
-        image.onload = () => { if (ticket === previewGeneration) log("画像読込成功: " + file.webkitRelativePath); };
-        image.onerror = () => {
-          if (ticket !== previewGeneration) return;
-          clearPreview();
-          log("画像を表示できません: " + file.webkitRelativePath);
-        };
-        image.src = objectURL;
-        $("preview").append(image);
-      } else {
-        const bytes = new Uint8Array(await read(16384));
-        if (ticket !== previewGeneration) return;
-        if (bytes.includes(0)) throw new Error("バイナリのためテキスト表示しません。");
-        let text;
-        // A prefix can end inside a multibyte character. Leave that suffix
-        // buffered instead of misclassifying valid UTF-8 as Shift-JIS.
-        const options = {stream: file.size > bytes.length};
-        try { text = new TextDecoder("utf-8", {fatal: true}).decode(bytes, options); }
-        catch (_) {
-          try { text = new TextDecoder("shift-jis", {fatal: true}).decode(bytes, options); }
-          catch (_) { text = new TextDecoder("utf-8").decode(bytes, options); }
-        }
-        const pre = document.createElement("pre");
-        pre.textContent = text;
-        $("preview").append(pre);
-        log("テキスト表示（先頭16 KiB、UTF-8/Shift-JIS候補）: " + file.webkitRelativePath);
-      }
-    } catch (error) {
-      if (ticket !== previewGeneration) return;
-      clearPreview();
-      log("プレビュー失敗・旧内容は非表示: " + errorText(error));
-    }
-  }
-  $("picker").addEventListener("click", () => {
-    resetAccess();
-    $("picker").value = "";
-    log("フォルダ選択開始。前回の一覧とプレビューを非表示にしました。");
-  });
-  $("picker").addEventListener("cancel", () => {
-    resetAccess();
-    log("選択キャンセル。保存データは残し、一覧は表示しません。");
-  });
-  $("picker").addEventListener("change", async () => {
-    resetAccess();
-    const ticket = generation;
-    const selected = Array.from($("picker").files);
-    if (!selected.length) { log("ファイルなし。空フォルダは検出できない場合があります。"); return; }
-    try {
-      const paths = new Set();
-      let root;
-      for (const file of selected) {
-        const parts = file.webkitRelativePath.split("/");
-        if (parts.length < 2 || parts.some(p => !p || p === "." || p === ".."))
-          throw new Error("相対パスを取得できません: " + file.name);
-        if (root && root !== parts[0]) throw new Error("複数ルートが混在しています。");
-        root = parts[0];
-        if (paths.has(file.webkitRelativePath)) throw new Error("相対パスが重複しています。");
-        paths.add(file.webkitRelativePath);
-        await file.slice(0, 1).arrayBuffer();
-        if (ticket !== generation) return;
-      }
-      files = selected;
-      const fragment = document.createDocumentFragment();
-      for (const file of files) {
-        const item = document.createElement("li");
-        const button = document.createElement("button");
-        button.type = "button";
-        button.textContent = file.webkitRelativePath;
-        button.addEventListener("click", () => preview(file));
-        item.append(button);
-        fragment.append(item);
-      }
-      $("files").append(fragment);
-      $("save").disabled = savePending;
-      log("選択ファイルの相対パス取得・読取確認が完了しました。日本語と階層を目視確認してください。");
-    } catch (error) {
-      if (ticket !== generation) return;
-      resetAccess();
-      log("選択失敗。保存データは置換しません: " + errorText(error));
-    }
-  });
-  $("save").addEventListener("click", async () => {
-    if (!files.length || savePending) return;
-    const ticket = generation, selected = files.slice();
-    savePending = true;
-    $("save").disabled = true;
-    try {
-      // Selection-time readability is not a promise of access at save time.
-      for (const file of selected) {
-        await file.slice(0, 1).arrayBuffer();
-        if (ticket !== generation) return;
-      }
-      const snapshot = {
-        savedAt: new Date().toISOString(),
-        files: selected.map(file => ({path: file.webkitRelativePath, size: file.size, lastModified: file.lastModified}))
-      };
-      await database(snapshot, () => ticket === generation);
-      if (ticket === generation)
-        log("IndexedDBトランザクション完了。再起動照合マーカー: " + snapshot.savedAt);
-    } catch (error) {
-      if (ticket !== generation) return;
-      resetAccess();
-      log("読取または保存失敗（前回データを保持）。フォルダを再選択してください: " + errorText(error));
-    } finally {
-      savePending = false;
-      $("save").disabled = !files.length;
-    }
-  });
-  window.addEventListener("pagehide", () => { resetAccess(); $("picker").value = ""; });
-  log("Phase 0 PoC。本番検索UIは未実装です。");
-  log("起動URL方式: " + location.protocol + " / " + navigator.userAgent);
-  log("webkitdirectoryプロパティ: " + ("webkitdirectory" in $("picker")));
-  // This observation alone does not prove the native folder picker works.
-  database().then(saved => {
-    log(saved ? "保存マーカー読出: " + saved.savedAt + "。一覧は復元しません。フォルダを再選択してください。"
-      : "保存マーカーなし。フォルダ選択後に保存テストを実行してください。");
-  }).catch(error => log("IndexedDB読出失敗: " + errorText(error)));
-})();
-</script>
+<p id="notice" role="status" hidden></p>
+<p class="hint footer">Safariを再起動・ページを再読込した後は、対象フォルダを再選択してください。追加・削除の反映も再選択が必要です。空フォルダの完全列挙はできません。</p>
+<input id="picker" type="file" webkitdirectory multiple hidden aria-label="検索対象フォルダ">
+<noscript>JavaScriptを有効にして、このHTMLをSafariで開いてください。</noscript>
+</main>
 </body>
 </html>
