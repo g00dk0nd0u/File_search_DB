@@ -2,7 +2,7 @@
 
 関連: [Issue #4](https://github.com/g00dk0nd0u/File_search_DB/issues/4)。
 
-**本番の検索アプリは未実装です。Phase 0全体は未検証・未完了です。**
+**本番の検索アプリは未実装です。Phase 0の受入は未完了です。**
 Issue #4の「Safari実機で使える手段が確定してから本実装へ進む」に従い、
 本番UI・検索ロジックの移植は実機受入後に進めます。
 既存Python版、Edge版とPR #3は変更していません。
@@ -127,6 +127,44 @@ CIの保存データは明示的に合成メタデータと記録します。
   Safari 26.6.1 / macOS 15.7.9のセッション作成までは観測したが、
   file://起動・IndexedDB・再起動保存の成功は未確認。
   以降のCI結果はPR・Issueに追記し、緑表示だけで成功と推定しない。
+
+### macOS CIの確認結果（2026-10-27 JST）
+
+検証対象コード: `a20a6c85554d8a1aa46dfd4ab9c7b9ce6c6db00e`。
+[CI実行](https://github.com/g00dk0nd0u/File_search_DB/actions/runs/40345806290) /
+[証跡](https://github.com/g00dk0nd0u/File_search_DB/actions/runs/40345806290/artifacts/12660439803)
+（ログ・report.json・初期/失敗画面、14日保存）。
+
+| 検証 | 結果 |
+|---|---|
+| Node 22ネイティブTextDecoderを使うPoC模擬テスト | 12件成功 |
+| 既存Python回帰 / 開発用ドライバーの構文 | 55件成功 / 成功 |
+| インストール済みSafari起動 | Safari 26.6.1、macOS 15.7.9、シミュレーター不使用を確認 |
+| PoC HTMLの直接起動 | 自動操作環境のsandboxで拒否。アプリDOMに未到達 |
+| ネイティブフォルダ選択・相対パス・日本語 | 未検証 |
+| Safariの実IndexedDB・完全終了後復元 | 未検証。該当ステップに未到達 |
+| 実PDF・画像・テキストプレビュー | 未検証 |
+
+Safariが表示したエラー:
+
+> Ignoring request to load this main resource because it is outside the sandbox (WebKitInternal:0)
+
+エラーページURLは `safari-resource:/ErrorPage.html`。
+HTMLがrunner上に存在することは確認済み。
+CIはこの失敗を終了コード1で正しく報告する。
+sandbox無効化、制限緩和、HTTP配信などの回避は行わない。
+**これはSafari自動操作環境の観測であり、通常のFinderから開いたSafariでも不可能だと断定するものではない。**
+通常プロファイルでの手動検証が必要。
+
+途中の緑表示CIを成功とした説明は撤回する。
+ジョブ結果だけでなくログ本文の `error` と到達済みチェックを確認し、
+Phase 0・本番実装を完了扱いにしない。
+
+自己精査中にmain3がPR #3のマージで
+`b4b1cc53741a16938592f225ffb63cb28de1d566` へ進んだことを確認した。
+開始基点は上記の `053dc726...` のまま維持し、
+CIはその時点のmain3とのテストマージを検証している。
+この作業では既存PR #3・Edge版の内容を変更していない。
 
 ### 次段階（Phase 0受入後）
 
