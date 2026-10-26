@@ -45,7 +45,7 @@ async function app(roots, options={}) {
   const themeButton = new Element("button", "Dark Mode");
   const context = {document:{getElementById:$,createElement:tag=>new Element(tag),createTextNode:t=>new Element("text",t),querySelectorAll:()=>[themeButton],documentElement:{dataset:{}}},
     FolderSearch:options.search || Search,FolderFS:options.fileAt ? {...FS, fileAt:options.fileAt} : FS,FolderStore:{open:async()=>db},Option:class extends Element {constructor(t,v){super("option",t);this.value=v;}},
-    URL,AbortController,DOMException,crypto:require("node:crypto").webcrypto,setTimeout,clearTimeout,confirm:()=>true};
+    URL:{createObjectURL(blob){state.urlsCreated=(state.urlsCreated||0)+1;return URL.createObjectURL(blob);},revokeObjectURL(url){state.urlsRevoked=(state.urlsRevoked||0)+1;URL.revokeObjectURL(url);}},AbortController,DOMException,crypto:require("node:crypto").webcrypto,setTimeout,clearTimeout,confirm:()=>true};
   context.window={indexedDB:{},isSecureContext:true,showDirectoryPicker:async()=>roots[0].handle,addEventListener:()=>{}};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,"../app.js"),"utf8"),context);
   const submit = async text => {$("query").value=text;$("search-form").onsubmit({preventDefault(){}}); await new Promise(r=>setTimeout(r,5));};
@@ -230,7 +230,7 @@ async function test(name,fn){await fn();console.log("PASS "+name);count++;}
       await until(()=>all(x.$("preview"),n=>n.tag===tag).length===1);
       assert.equal(x.state.settings.selected[""],`sub/deep/sample.${ext}`);
     }
-    assert.equal(reads,3);toggle(x).onclick();
+    assert.equal(reads,3);assert.equal(x.state.urlsCreated,2);assert.equal(x.state.urlsRevoked,2);toggle(x).onclick();
     assert.equal(all(x.$("preview"),n=>n.tag==="pre").length,1);
     assert.equal(a.state.requests,0);
   });
