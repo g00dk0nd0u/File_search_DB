@@ -14,12 +14,10 @@
 <main>
 <section id="search-view" aria-label="Folder Search">
 <form id="search-form" class="toolbar">
-<label for="root">Search Target</label><select id="root" disabled></select>
+<select id="root" aria-label="検索対象ルート" disabled></select>
 <div class="query-group"><input id="query" aria-label="検索キーワード" placeholder="Enter keyword" autocomplete="off"><button id="search" disabled>Search</button></div>
-<button id="reselect" type="button" class="secondary" disabled>フォルダ再選択</button>
 <button id="settings-button" type="button" class="secondary" disabled>Settings</button>
 </form>
-<p class="hint">AND: 空白 · OR · -除外 · "フレーズ" — ファイル名・フォルダ名を検索</p>
 <p id="meta" role="status">登録情報を読み込んでいます…</p>
 <div class="workspace"><div id="results" aria-label="検索結果"></div><aside aria-label="プレビュー"><h2 id="preview-title">Preview</h2><div id="preview"><p class="hint">ファイルを選択してください。</p></div></aside></div>
 </section>
@@ -29,7 +27,6 @@
 <div class="table-scroll"><table><thead><tr><th>Display Name</th><th>選択フォルダ名（絶対パス取得不可）</th><th>Status</th><th>Actions</th></tr></thead><tbody id="roots"></tbody></table></div>
 </section>
 <p id="notice" role="status" hidden></p>
-<p class="hint footer">Safariを再起動・ページを再読込した後は、対象フォルダを再選択してください。追加・削除の反映も再選択が必要です。空フォルダの完全列挙はできません。</p>
 <input id="picker" type="file" webkitdirectory multiple hidden aria-label="検索対象フォルダ">
 <noscript>JavaScriptを有効にして、このHTMLをSafariで開いてください。</noscript>
 </main>

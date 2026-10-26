@@ -37,7 +37,6 @@
     }
     $("root").value = model.activeId;
     $("root").disabled = !model.roots.size;
-    $("reselect").disabled = !model.activeId;
     $("search").disabled = !model.sessions.has(model.activeId);
   }
   function choose(id) {
@@ -139,7 +138,6 @@
   function folder(session, row, query, ui) {
     const details = node("details", undefined, "folder"), summary = node("summary", row.name);
     details.append(summary);
-    details.append(node("p", row.path || session.rootName, "path"));
     let populated = false;
     const populate = () => {
       if (populated) return; populated = true;
@@ -174,7 +172,7 @@
       const fragment = document.createDocumentFragment();
       for (const row of rows) fragment.append(folder(session, row, query, ui));
       $("results").replaceChildren(fragment);
-      $("meta").textContent = rows.length ? rows.length + " フォルダ" + (rows.length === 100 ? "（上限100件。検索語で絞り込んでください）" : "") : "一致するフォルダはありません。";
+      $("meta").textContent = rows.length ? "" : "一致するフォルダはありません。";
     } catch (error) { if (current()) { clearView(); fail(error); } }
   }
   function renderSettings() {
@@ -212,7 +210,6 @@
   $("settings-button").addEventListener("click", () => view(true));
   $("back").addEventListener("click", () => view(false));
   $("add").addEventListener("click", () => startPicker(crypto.randomUUID()));
-  $("reselect").addEventListener("click", () => startPicker(model.activeId));
   window.addEventListener("pagehide", () => {
     model.cancel(); model.sessions.clear(); pickerTask = null; $("picker").value = ""; clearView();
   });
