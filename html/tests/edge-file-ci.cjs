@@ -448,7 +448,8 @@ async function compactUI() {
     assert(layout.font>=13.5 && layout.font<=14);
     assert(layout.pad>=3 && layout.pad<=4);
     const first=page.getByRole("button",{name:"健康保険証.txt",exact:true});
-    await first.click();
+    await first.focus();
+    await first.press("Enter");
     await page.waitForFunction(()=>document.querySelector("#preview pre")?.textContent.includes("健康保険証"));
     await page.getByRole("button",{name:"健康診断.txt",exact:true}).first().click();
     await page.waitForFunction(()=>document.querySelector("#preview pre")?.textContent.includes("健康診断"));
