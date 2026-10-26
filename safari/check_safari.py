@@ -136,9 +136,17 @@ def main():
             if time.monotonic() >= deadline or SERVICE.poll() is not None:
                 raise
             time.sleep(0.2)
+    target = (Path(__file__).parent / "index.html").resolve()
+    check("PoC file exists on runner", target.is_file(), str(target))
     initial_log = open_safari()
+    REPORT["initial_page"] = execute("""return {
+      href: location.href, title: document.title, readyState: document.readyState,
+      pickerPresent: !!document.getElementById('picker'),
+      body: document.body ? document.body.innerText.slice(0, 4000) : null
+    };""")
     evidence("initial")
     (ARTIFACTS / "initial.log").write_text(initial_log, encoding="utf-8")
+    check("PoC document loaded", REPORT["initial_page"]["pickerPresent"], REPORT["initial_page"])
     observed = execute("""return {
       protocol: location.protocol, ua: navigator.userAgent,
       directoryProperty: 'webkitdirectory' in document.getElementById('picker'),

@@ -174,8 +174,13 @@ if (typeof require !== "undefined" && require.main === module) {
   const path = require("node:path");
   const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
   const script = html.match(/<script>\n([\s\S]*?)<\/script>/)[1];
+  // Keep the process alive and fail if an unresolved async regression stalls.
+  const timeout = setTimeout(() => {
+    console.error("PoC tests did not settle within 20 seconds");
+    process.exitCode = 1;
+  }, 20000);
   runPoCTests(script, TextDecoder).then(
-    result => console.log(JSON.stringify(result, null, 2)),
-    error => { console.error(error); process.exitCode = 1; }
+    result => { clearTimeout(timeout); console.log(JSON.stringify(result, null, 2)); },
+    error => { clearTimeout(timeout); console.error(error); process.exitCode = 1; }
   );
 }
