@@ -275,7 +275,7 @@ async function browserLogic(page, label) {
         output,
       );
       assert.doesNotMatch(output, /FAIL/);
-      assert.match(output, /PASS core \{"passed":28,/);
+      assert.match(output, /PASS core \{"passed":29,/);
       for (const text of [
         "root saved",
         "snapshot reread",
@@ -412,6 +412,7 @@ async function compactUI() {
         {name:"健康診断.txt",path:"sub/健康診断.txt",parent:"sub"},
       ],
     };
+    for (const file of snapshot.files) file.lastModified = Date.now();
     const root = {id:"fixture",displayName:"健康",directoryName:"健康",handle:{
       queryPermission: async()=>"granted",
       async *entries() { await new Promise(()=>{}); },
@@ -438,6 +439,9 @@ async function compactUI() {
     assert.equal(await page.locator("#meta").innerText(),"");
     assert.equal(await page.locator("#preview-panel").isVisible(), false);
     const fullWidth = await page.locator("#results").evaluate(n=>n.getBoundingClientRect().width);
+    assert.equal(await page.locator("#modified option").count(),6);
+    assert.equal(await page.locator("#format option").count(),12);
+    await evidence(page,"search-fullwidth-preview-closed");
     const first=page.getByRole("button",{name:"健康保険証.txt",exact:true});
     await first.focus();
     await first.press("Enter");
@@ -472,6 +476,15 @@ async function compactUI() {
     assert(rects[1].y>=rects[0].bottom);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
     await evidence(page,"compact-mobile");
+    await page.locator("#format").selectOption("txt");
+    assert.equal(await page.locator("#preview-panel").isVisible(),false);
+    await page.locator("#query").fill("");
+    await page.locator("#search").click();
+    await page.waitForFunction(()=>document.querySelector("#results")?.textContent.includes("健康保険証.txt"));
+    assert.doesNotMatch(await page.locator("#results").innerText(),/旅行写真/);
+    await page.locator("#modified").selectOption("7");
+    await page.waitForFunction(()=>document.querySelector("#results")?.textContent.includes("健康診断.txt"));
+    await evidence(page,"filter-only-mobile");
     assert.deepEqual(diagnostics.errors,[]);
   },page);
   await page.close();
