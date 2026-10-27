@@ -86,11 +86,13 @@
       urls.delete(pane);
     }
   }
+  let previewContext;
   function clearPreviews() {
+    $("preview-panel").hidden = true; $("workspace").className = "workspace";
     const pane = $("preview");
     pane._request = null;
     for (const pane of urls.keys()) revoke(pane);
-    paneMessage(pane, "Select a file to preview it here.");
+    pane.replaceChildren();
   }
   function saveUI() {
     if (db) db.put("settings", "ui", ui).catch(fail);
@@ -154,7 +156,7 @@
     saveUI();
   }
   function syncExpansion() {
-    const context = JSON.stringify([activeId, ui.query]);
+    const context = JSON.stringify([activeId, ui.query, $("modified").value, $("format").value]);
     if (ui.expansionContext !== null && ui.expansionContext !== context) {
       ui.expanded = [];
       ui.collapsed = [];
@@ -478,12 +480,22 @@
     composing = false;
     searchTimer = setTimeout(submitSearch, 250);
   };
+  $("preview-close").onclick = () => {
+    clearPreviews(); ui.selected = {}; saveUI();
+    for (const button of $("results").querySelectorAll(".item")) {
+      button.classList.remove("selected"); button.setAttribute("aria-pressed", "false");
+    }
+  };
+  for (const id of ["modified", "format"]) $(id).onchange = () => {
+    ++generation; clearPreviews(); if (!composing) submitSearch();
+  };
   function paneMessage(pane, text) {
     revoke(pane);
     pane.replaceChildren(element("p", text, "hint"));
   }
   async function preview(item, pane, root) {
     const token = {};
+    $("preview-panel").hidden = false; $("workspace").className = "workspace preview-open";
     pane._request = token;
     paneMessage(pane, "Loading…");
     try {
@@ -676,7 +688,9 @@
       root = activeRoot(),
       localSnapshot = snapshot,
       queryText = ui.query;
-    clearPreviews();
+    const options = {days: $("modified").value, format: $("format").value, now: Date.now()};
+    const context = JSON.stringify([activeId, queryText, options.days, options.format]);
+    if (context !== previewContext) { clearPreviews(); previewContext = context; }
     $("results").replaceChildren();
     if (!root) {
       $("meta").textContent =
@@ -702,6 +716,7 @@
       queryText,
       100,
       () => version !== generation,
+      options,
     );
     const stillAllowed = await readable(root);
     if (version !== generation) return;
@@ -710,28 +725,12 @@
       return;
     }
     $("meta").textContent = rows.length || !queryText.trim() ? "" : "No matching folders or files.";
+    if (options.days !== "all" && options.days && localSnapshot.files.some(file => !Number.isFinite(file.lastModified)))
+      $("meta").textContent += " 更新日時が不明な旧索引のファイルは除外しています。Settings → Reload を実行してください。";
     // Build once per render rather than rescanning the full index per tree node.
     const children = new Map(), byPath = new Map(), budget = { left: 500 };
-    const query = S.parse(queryText), visible = new Set();
-    // Display filtering is separate from Python-compatible folder aggregation.
-    // Retain matches and their ancestors, never all children of a name hit.
-    let checked = 0;
-    for (const [entries, kind] of [[localSnapshot.folders, "directory"], [localSnapshot.files, "file"]]) {
-      for (const item of rows.length ? entries : []) {
-        if ((kind === "directory" || query.groups.length) && S.matches(item.name, query)) {
-          let path = item.path;
-          while (!visible.has(path)) {
-            visible.add(path);
-            if (!path) break;
-            path = path.split("/").slice(0, -1).join("/");
-          }
-        }
-        if (++checked % 500 === 0) {
-          await S.pause();
-          if (version !== generation) return;
-        }
-      }
-    }
+    const {visible} = await S.visibility(localSnapshot, queryText, options, () => version !== generation);
+    if (version !== generation) return;
     let indexed = 0;
     for (const [entries, kind] of [[localSnapshot.folders, "directory"], [localSnapshot.files, "file"]]) {
       for (const item of rows.length ? entries : []) {
@@ -759,7 +758,7 @@
     }
     const pane = $("preview");
     const selected = Object.values(ui.selected).map(path => byPath.get(path)).find(item => item?.kind === "file");
-    if (selected) paneMessage(pane, `Previously selected: ${selected.name}. Select it again to preview.`);
+    if (!selected && !$("preview-panel").hidden) clearPreviews();
     // Drop selections that disappeared after a refresh or no longer match.
     ui.selected = Object.fromEntries(Object.entries(ui.selected).filter(([, path]) => byPath.get(path)?.kind === "file"));
     saveUI();

@@ -22,7 +22,8 @@ async function harness(records=[],search=S.search,preferences=new Map(),storageF
    setAttribute(k,v){this.attrs[k]=v;} getAttribute(k){return this.attrs[k];}
    remove(){this.parent.children=this.parent.children.filter(c=>c!==this);}
  }
- const ids=Object.fromEntries(['search-view','settings-view','query','root','picker','preview','preview-title','results','roots','notice','meta','search','search-form','settings-button','back','add','theme-toggle','theme-status'].map(id=>[id,new Element()]));
+ const ids=Object.fromEntries(['modified','format','preview-close','preview-panel','workspace','search-view','settings-view','query','root','picker','preview','preview-title','results','roots','notice','meta','search','search-form','settings-button','back','add','theme-toggle','theme-status'].map(id=>[id,new Element()]));
+ ids.modified.value=ids.format.value="all";
  const all=()=>Object.values(ids).flatMap(e=>[e,...desc(e)]);
  const desc=e=>e.children.flatMap(c=>[c,...desc(c)]);
  const document={documentElement:new Element("html"),getElementById:id=>ids[id],createElement:tag=>new Element(tag),createTextNode:text=>Object.assign(new Element("#text"),{textContent:text}),createDocumentFragment:()=>Object.assign(new Element(),{fragment:true}),
@@ -57,7 +58,7 @@ test('UI search, expand, Japanese preview; state survives repeated search',async
  assert.equal(h.ids.preview.children[0].textContent,'日本語');
  assert.equal(h.ids.results.children[0].children.some(e=>e.tagName==='p'),false);
  await h.query('alpha beta');assert.equal(h.ids.results.children[0].open,true);
- assert.equal(h.buttons()[0].getAttribute('aria-pressed'),'true');
+ assert.equal(h.ids['preview-panel'].hidden,true);
 });
 test('UI root switch isolates sessions and clears old preview',async()=>{
  const h=await harness();await h.pick([file('Same/one.txt')]);await h.pick([file('Same/two.txt')]);await h.query('two');
@@ -259,4 +260,25 @@ test('large subtree filtering yields and cannot append after query/root change',
  h.ids.root.value='2';await h.ids.root.emit('change');await h.query('new');await settle(h);
  assert.equal(h.ids.results.children[0].children[0].textContent,'B');
  assert.deepEqual(h.buttons().map(e=>e.textContent),['new.txt']);
+});
+test('preview close invalidates slow reads; same conditions and theme keep an open preview',async()=>{
+ const h=await harness(), f=file('A/alpha.txt');await h.pick([f]);await h.query('alpha');
+ assert.equal(h.ids['preview-panel'].hidden,true);
+ await h.buttons()[0].click();assert.equal(h.ids['preview-panel'].hidden,false);
+ await h.query('alpha');assert.equal(h.ids['preview-panel'].hidden,false);
+ await h.ids['theme-toggle'].click();assert.equal(h.ids['preview-panel'].hidden,false);
+ await h.ids['preview-close'].click();assert.equal(h.ids['preview-panel'].hidden,true);
+ const gate=deferred(),slice=f.slice;f.slice=(...args)=>({arrayBuffer:async()=>{await gate.promise;return slice(...args).arrayBuffer();}});
+ const pending=h.buttons()[0].click();await h.ids['preview-close'].click();gate.resolve();await pending;
+ assert.equal(h.ids.preview.children.length,0);assert.equal(h.ids['preview-panel'].hidden,true);
+});
+test('filter-only changes rerun cached search, prune files and close preview',async()=>{
+ const h=await harness(),now=Date.now(), pdf=file('A/deep/alpha.PDF'), old=file('A/deep/old.pdf'),txt=file('A/deep/alpha.txt');
+ pdf.lastModified=txt.lastModified=now;old.lastModified=now-181*86400000;
+ await h.pick([pdf,old,txt]);assert.equal(h.ids.results.children.length,0);
+ h.ids.format.value='pdf';await h.ids.format.emit('change');await h.tick();
+ assert.deepEqual([...new Set(h.buttons().map(b=>b.textContent))].sort(),['alpha.PDF','old.pdf']);
+ await h.buttons()[0].click();h.ids.modified.value='7';await h.ids.modified.emit('change');await h.tick();
+ assert.deepEqual([...new Set(h.buttons().map(b=>b.textContent))],['alpha.PDF']);assert.equal(h.ids['preview-panel'].hidden,true);
+ await h.query('alpha -draft');assert(h.buttons().every(b=>b.textContent==='alpha.PDF'));
 });

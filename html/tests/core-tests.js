@@ -98,7 +98,7 @@
         for (const child of entries) yield [child.name, child];
       },
     });
-    const f = (name) => ({ name, kind: "file" });
+    const f = (name) => ({ name, kind: "file", getFile: async () => ({lastModified: 123}) });
     const handle = directory("Root", [
       directory("日本語", [f("同名.txt")]),
       directory("Empty", []),
@@ -107,6 +107,7 @@
       f("同名.txt"),
     ]);
     const indexed = await FS.scan(handle);
+    assert(indexed.files.every(file => file.lastModified === 123), "scanner persists actual file lastModified");
     equal(
       indexed.folders.map((i) => i.path),
       ["", "日本語", "Empty"],

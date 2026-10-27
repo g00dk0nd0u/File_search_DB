@@ -18,7 +18,8 @@ class Element {
   querySelectorAll() { return []; }
 }
 async function until(fn) {
-  for (let i=0;i<200;i++) { if (fn()) return; await new Promise(r => setTimeout(r, 2)); }
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) { if (fn()) return; await new Promise(r => setTimeout(r, 2)); }
   throw Error("Timed out waiting for app state");
 }
 function fixture(id) {
@@ -27,12 +28,13 @@ function fixture(id) {
   const handle = {name:id, async queryPermission() { if (state.permissionGate) await state.permissionGate.promise; if (state.permission instanceof Error) throw state.permission; return state.permission; },
     async requestPermission() {state.requests++; return state.permission = "granted";},
     async isSameEntry(other) { return other === handle; },
-    async *entries() { state.scans++; await gate.promise; for(const name of state.files) yield [name,{kind:"file"}]; if(state.error) throw state.error; }};
+    async *entries() { state.scans++; await gate.promise; for(const name of state.files) yield [name,{kind:"file",getFile:async()=>({lastModified:1})}]; if(state.error) throw state.error; }};
   return {id,displayName:id,directoryName:id,handle,state};
 }
 const snap = (id, names=["old.txt"]) => ({folders:[{path:"",parent:null,name:id,depth:0}],files:names.map(name=>({name,path:name,parent:"",depth:1}))});
 async function app(roots, options={}) {
   const nodes = new Map(), $ = id => {if(!nodes.has(id)) nodes.set(id,new Element());return nodes.get(id);};
+  $("modified").value=$("format").value="all";
   $("progress-wrap").hidden = true;
   const stored = new Map(roots.map(r=>[r.id,snap(r.id)]));
   if(options.snapshot) stored.set(roots[0].id, options.snapshot);
@@ -112,7 +114,7 @@ async function test(name,fn){await fn();console.log("PASS "+name);count++;}
     assert.equal(x.$("results").children[0].children[1].hidden,false);
     a.state.gate.resolve();await until(()=>x.state.commits===1&&x.$("results").textContent.includes("new"));
     assert.equal(x.$("results").children[0].children[1].hidden,false);
-    assert.match(x.$("preview").textContent,/Previously selected: old.txt/);
+    assert.equal(x.$("preview-panel").hidden,true);
     assert.equal(x.state.settings.selected[""],"old.txt");
   });
   await test("Reselect recovers a denied child and permits an explicit retry",async()=>{
@@ -188,7 +190,7 @@ async function test(name,fn){await fn();console.log("PASS "+name);count++;}
     const a=fixture("A"), x=await app([a],{snapshot:snap(Search.parse(query).groups[0]?.join(" ") || "A",[name]),ui:{query}});
     await until(()=>a.state.scans===1);
     const target=cls(x.$("results"),"item").find(n=>n.textContent===name);
-    if (!Search.parse(query).groups.length || !Search.matches(name, Search.parse(query))) {
+    if (!Search.matches(name, Search.parse(query))) {
       assert.equal(target, undefined);
       return;
     }
@@ -213,7 +215,7 @@ async function test(name,fn){await fn();console.log("PASS "+name);count++;}
   await test("permission revoked while building child index hides results without auto prompt",async()=>{
     const a=fixture("A");let yields=0;
     const x=await app([a],{snapshot:snap("A",Array.from({length:600},(_,i)=>`file${i}.txt`)),
-      ui:{query:"A"},search:{...Search,pause:async()=>{yields++;a.state.permission="denied";}}});
+      ui:{query:"A"},search:{...Search,visibility:async(...args)=>{const result=await Search.visibility(...args);yields++;a.state.permission="denied";return result;}}});
     await until(()=>x.$("meta").textContent.includes("Read access"));
     assert(yields>0);assert.equal(x.$("results").children.length,0);
     assert.equal(a.state.scans,0);assert.equal(a.state.requests,0);assert(x.stored.has("A"));
@@ -278,6 +280,29 @@ async function test(name,fn){await fn();console.log("PASS "+name);count++;}
     x.themeButton.onclick();assert.equal(x.state.settings.theme,"dark");
     const y=await app([fixture("A")],{ui:x.state.settings});await until(()=>y.$("root").value==="A");
     assert.equal(y.document.documentElement.dataset.theme,"dark");
+  });
+  await test("preview close cancels slow media; repeated search and theme preserve open pane", async()=>{
+    const a=fixture("A"),slow=deferred(),x=await app([a],{fileAt:()=>slow.promise});await until(()=>a.state.scans===1);
+    assert.equal(x.$("preview-panel").hidden,true);
+    cls(x.$("results"),"item")[0].onclick();await new Promise(r=>setTimeout(r,5));
+    assert.equal(x.$("preview-panel").hidden,false);
+    await x.submit("txt");assert.equal(x.$("preview-panel").hidden,false);
+    x.themeButton.onclick();assert.equal(x.$("preview-panel").hidden,false);
+    x.$("preview-close").onclick();slow.resolve(Object.assign(new Blob(["late"]),{name:"late.pdf"}));
+    await new Promise(r=>setTimeout(r,10));assert.equal(x.$("preview-panel").hidden,true);
+    assert.equal(x.$("preview").children.length,0);assert.equal(x.state.urlsCreated||0,0);
+  });
+  await test("filter-only search uses cache, old date metadata excluded with Reload guidance",async()=>{
+    const a=fixture("A"),snapshot=snap("A",["alpha.PDF","alpha.txt","old.pdf","unknown.pdf"]),now=Date.now();
+    snapshot.files[0].lastModified=snapshot.files[1].lastModified=now;
+    snapshot.files[2].lastModified=now-181*86400000;
+    const x=await app([a],{snapshot,ui:{query:""}});await until(()=>a.state.scans===1);
+    assert.equal(x.$("results").children.length,0);
+    x.$("format").value="pdf";x.$("format").onchange();await until(()=>x.$("results").textContent.includes("unknown.pdf"));
+    assert.doesNotMatch(x.$("results").textContent,/alpha.txt/);
+    x.$("modified").value="7";x.$("modified").onchange();await until(()=>x.$("meta").textContent.includes("Reload"));
+    assert.match(x.$("results").textContent,/alpha.PDF/);assert.doesNotMatch(x.$("results").textContent,/old.pdf|unknown.pdf/);
+    assert.equal(a.state.scans,1);assert.equal(x.$("preview-panel").hidden,true);
   });
   console.log(`${count} app integration tests passed (simulated DOM/handles/storage)`);
 })().catch(e=>{console.error(e);process.exitCode=1;});

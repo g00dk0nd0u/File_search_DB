@@ -397,25 +397,69 @@
   }
   const asciiLower = (value) => value.replace(/[A-Z]/g, (c) => c.toLowerCase());
   const pause = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const formats = {
+    pdf: ["pdf"], jpg: ["jpg", "jpeg"], png: ["png"],
+    excel: ["xls", "xlsx", "xlsm"], powerpoint: ["ppt", "pptx", "pptm"],
+    word: ["doc", "docx", "docm"], txt: ["txt"], dwg: ["dwg"],
+    revit: ["rvt"], sketchup: ["skp"], grasshopper: ["gh", "ghx"],
+  };
+  const filtered = (options = {}) => options.days && options.days !== "all" || options.format && options.format !== "all";
+  function eligible(file, options = {}) {
+    const extensions = formats[options.format];
+    if (extensions && (!file.name.includes(".") || !extensions.includes(file.name.split(".").pop().toLowerCase()))) return false;
+    if (options.days && options.days !== "all") {
+      const age = options.now - file.lastModified;
+      if (!Number.isFinite(file.lastModified) || age < 0 || age > Number(options.days) * 86400000) return false;
+    }
+    return true;
+  }
+  // Shared display contract: only matching files and required ancestors survive.
+  // Parent buckets and sets keep this linear even for large/deep indexes.
+  async function visibility(snapshot, queryText, options = {}, cancelled = () => false) {
+    const query = parse(queryText), hasQuery = !!(query.groups.length || query.excluded.length);
+    const visible = new Set(), files = new Set(), ancestors = new Set();
+    const parents = new Map(snapshot.folders.map(folder => [folder.path, folder.parent]));
+    function ascend(path, target) {
+      while (path != null && !target.has(path)) {
+        target.add(path); path = parents.get(path);
+      }
+    }
+    let count = 0;
+    for (const file of snapshot.files) {
+      if (eligible(file, options) && (!hasQuery || matches(file.name, query))) {
+        files.add(file.path); visible.add(file.path); ascend(file.parent, ancestors);
+      }
+      if (++count % 500 === 0) { await pause(); if (cancelled()) return {visible, files, ancestors}; }
+    }
+    for (const path of ancestors) visible.add(path);
+    if (!filtered(options) && hasQuery) for (const folder of snapshot.folders) {
+      if (matches(folder.name, query)) ascend(folder.path, visible);
+      if (++count % 500 === 0) { await pause(); if (cancelled()) break; }
+    }
+    return {visible, files, ancestors};
+  }
   async function search(
     snapshot,
     queryText,
     limit = 100,
     cancelled = () => false,
+    options = {},
   ) {
     const query = parse(queryText),
       positive = terms(query),
       candidates = candidateMatchers(query);
-    if (!positive.length && !query.excluded.length) return [];
+    if (!positive.length && !query.excluded.length && !filtered(options)) return [];
+    options = { ...options, now: options.now ?? Date.now() };
+    const display = await visibility(snapshot, queryText, options, cancelled);
+    if (cancelled()) return [];
     const hits = new Map(),
       counts = new Map();
     let processed = 0;
     for (const file of snapshot.files) {
       counts.set(file.parent, (counts.get(file.parent) || 0) + 1);
       if (
-        positive.length &&
-        candidates.some((re) => re.test(asciiLower(file.name))) &&
-        matches(file.name, query)
+        (positive.length || filtered(options)) && display.files.has(file.path) &&
+        (!positive.length || candidates.some((re) => re.test(asciiLower(file.name))))
       ) {
         if (!hits.has(file.parent)) hits.set(file.parent, []);
         hits.get(file.parent).push(file);
@@ -435,7 +479,7 @@
           : candidates.some((re) => re.test(asciiLower(folder.name))));
       const nameMatched = candidate && matches(folder.name, query),
         files = hits.get(folder.path) || [];
-      if (nameMatched || files.length) {
+      if ((nameMatched || files.length) && (!filtered(options) || display.ancestors.has(folder.path))) {
         files.sort(
           (a, b) =>
             compare(fold(a.name), fold(b.name)) ||
@@ -444,7 +488,7 @@
         results.push({
           ...folder,
           folderNameMatched: nameMatched,
-          fileMatchCount: nameMatched
+          fileMatchCount: filtered(options) ? files.length : nameMatched
             ? positive.length
               ? counts.get(folder.path) || 0
               : 0
@@ -495,6 +539,7 @@
       );
   }
   scope.FolderSearch = {
+    formats, filtered, eligible, visibility,
     fold,
     compare,
     parse,
