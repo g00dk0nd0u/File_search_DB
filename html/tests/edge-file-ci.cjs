@@ -290,7 +290,7 @@ async function browserLogic(page, label) {
       assert(match);
       markers.browser = JSON.parse(match[1]);
       return {
-        coreAssertions: 28,
+        coreAssertions: 29,
         realIndexedDBAssertions: 7,
         mockScope:
           "core-tests.js directory handles/permissions and generated files are synthetic; native folder access not exercised",

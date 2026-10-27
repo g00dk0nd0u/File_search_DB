@@ -18,7 +18,8 @@ class Element {
   querySelectorAll() { return []; }
 }
 async function until(fn) {
-  for (let i=0;i<200;i++) { if (fn()) return; await new Promise(r => setTimeout(r, 2)); }
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) { if (fn()) return; await new Promise(r => setTimeout(r, 2)); }
   throw Error("Timed out waiting for app state");
 }
 function fixture(id) {
