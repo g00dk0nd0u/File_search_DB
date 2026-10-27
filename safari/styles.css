@@ -62,3 +62,15 @@ td .actions{display:flex;gap:6px;flex-wrap:wrap}
   .query-group{flex-basis:100%}
   #root{flex:1;max-width:none}
 }
+
+/* Preview is opened only by a file selection. */
+.workspace { grid-template-columns: minmax(0, 1fr); }
+.workspace.preview-open { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+#preview-panel { position: sticky; top: 16px; min-width: 0; }
+.preview-close { float: right; margin: 0 0 8px 8px; }
+.filters { display: flex; flex-basis: 100%; align-items: center; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 800px) {
+  .workspace.preview-open { grid-template-columns: minmax(0, 1fr); }
+  #preview-panel { position: static; }
+  #search-form .query-group { order: 0; }
+}

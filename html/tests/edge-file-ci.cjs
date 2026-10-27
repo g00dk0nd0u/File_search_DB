@@ -436,6 +436,12 @@ async function compactUI() {
     assert.equal(await page.locator("#search-view .theme").count(),0);
     assert.doesNotMatch(await page.locator("#results").innerText(),/旅行写真/);
     assert.equal(await page.locator("#meta").innerText(),"");
+    assert.equal(await page.locator("#preview-panel").isVisible(), false);
+    const fullWidth = await page.locator("#results").evaluate(n=>n.getBoundingClientRect().width);
+    const first=page.getByRole("button",{name:"健康保険証.txt",exact:true});
+    await first.focus();
+    await first.press("Enter");
+    await page.waitForFunction(()=>document.querySelector("#preview pre")?.textContent.includes("健康保険証"));
     const layout = await page.evaluate(()=>{
       const rect=id=>document.getElementById(id).getBoundingClientRect().toJSON();
       return {preview:rect("preview"),panel:document.querySelector("aside").getBoundingClientRect().toJSON(),results:rect("results"),
@@ -447,10 +453,10 @@ async function compactUI() {
     assert(layout.panel.height>=270);
     assert(layout.font>=13.5 && layout.font<=14);
     assert(layout.pad>=3 && layout.pad<=4);
-    const first=page.getByRole("button",{name:"健康保険証.txt",exact:true});
-    await first.focus();
-    await first.press("Enter");
-    await page.waitForFunction(()=>document.querySelector("#preview pre")?.textContent.includes("健康保険証"));
+    assert(fullWidth > layout.results.width * 2);
+    await page.locator("#preview-close").click();
+    assert.equal(await page.locator("#preview-panel").isVisible(), false);
+    await first.click();
     await page.getByRole("button",{name:"健康診断.txt",exact:true}).first().click();
     await page.waitForFunction(()=>document.querySelector("#preview pre")?.textContent.includes("健康診断"));
     assert.equal(await page.locator('.item[aria-pressed="true"]').count(),1);

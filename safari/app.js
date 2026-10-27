@@ -36,6 +36,7 @@
   }
   function clearPreview() {
     previewGeneration++;
+    $("preview-panel").hidden = true; $("workspace").className = "workspace";
     $("preview").replaceChildren(); $("preview-title").textContent = "Preview";
     if (objectURL) URL.revokeObjectURL(objectURL);
     objectURL = null;
@@ -98,6 +99,7 @@
     const session = model.sessions.get(model.activeId), id = model.activeId, ticket = previewGeneration;
     const file = session?.handles.get(path);
     if (!file) return;
+    $("preview-panel").hidden = false; $("workspace").className = "workspace preview-open";
     state().selected = path;
     document.querySelectorAll(".file[aria-pressed=true]").forEach(e => e.setAttribute("aria-pressed", "false"));
     button?.setAttribute("aria-pressed", "true");
@@ -162,55 +164,25 @@
     if (from < name.length) fragment.append(document.createTextNode(name.slice(from)));
     return fragment;
   }
-  async function displayChildren(session, rows, queryText, current) {
-    // Build parent buckets once per session. Only inspect result subtrees per
-    // query, memoizing shared descendants; never rescan the index per folder.
-    let processed = 0;
-    const checkpoint = async () => {
-      if (++processed % 500 === 0) await S.pause();
-      if (!current()) throw new DOMException("Outdated display", "AbortError");
-    };
+  async function displayChildren(session, rows, queryText, current, options) {
+    const display = await S.visibility(session.snapshot, queryText, options, () => !current());
+    if (!current()) throw new DOMException("Outdated display", "AbortError");
     if (!childIndexes.has(session)) {
       const index = new Map();
+      let processed = 0;
       for (const kind of ["folders", "files"]) for (const item of session.snapshot[kind]) {
         if (!index.has(item.parent)) index.set(item.parent, {folders: [], files: []});
         index.get(item.parent)[kind].push(item);
-        await checkpoint();
+        if (++processed % 500 === 0) { await S.pause(); if (!current()) throw new DOMException("Outdated display", "AbortError"); }
       }
       childIndexes.set(session, index);
     }
-    const index = childIndexes.get(session), relevant = new Map(), visibleFiles = new Set();
-    const query = S.parse(queryText), cache = new Map();
-    // Iterative postorder keeps deep paths safe and yields on large subtrees.
-    for (const row of rows) {
-      const stack = [[row.path, false]];
-      while (stack.length) {
-        const [path, visited] = stack.pop();
-        if (relevant.has(path)) continue;
-        const bucket = index.get(path) || {folders: [], files: []};
-        if (!visited) {
-          stack.push([path, true]);
-          for (const folder of bucket.folders) stack.push([folder.path, false]);
-        } else {
-          let found = false;
-          for (const file of bucket.files) {
-            if (S.matches(file.name, query)) { visibleFiles.add(file.path); found = true; }
-            await checkpoint();
-          }
-          relevant.set(path, found || bucket.folders.some(folder =>
-            S.matches(folder.name, query) || relevant.get(folder.path)));
-        }
-        await checkpoint();
-      }
-    }
-    const childrenOf = path => {
-      if (!cache.has(path)) cache.set(path,
-        S.children(index.get(path) || {folders: [], files: []}, path).filter(item =>
-          item.kind === "file" ? visibleFiles.has(item.path) :
-            S.matches(item.name, query) || relevant.get(item.path)));
+    const index = childIndexes.get(session), cache = new Map();
+    return {visibleFiles: display.files, childrenOf: path => {
+      if (!cache.has(path)) cache.set(path, S.children(index.get(path) || {folders: [], files: []}, path)
+        .filter(item => display.visible.has(item.path)));
       return cache.get(path);
-    };
-    return {childrenOf, visibleFiles};
+    }};
   }
   function resultRenderer(session, query, ui, current, display) {
     const terms = S.terms(S.parse(query)), {childrenOf, visibleFiles} = display;
@@ -297,20 +269,22 @@
     clearTimeout(timer);
     const ticket = ++searchGeneration, id = model.activeId, session = model.sessions.get(id);
     const query = $("query").value;
+    const options = {days: $("modified").value, format: $("format").value, now: Date.now()};
+    const context = JSON.stringify([query, options.days, options.format]);
     const ui = state();
-    if (ui.query !== query) { ui.query = query; ui.collapsed.clear(); }
+    if (ui.query !== context) { ui.query = context; ui.collapsed.clear(); clearPreview(); }
     $("results").replaceChildren();
     if (!session) {
       clearPreview(); $("meta").textContent = model.pendingId ? "フォルダの選択内容を確認しています…" :
         (model.roots.size ? "検索するには対象フォルダを再選択してください。" : "Settings → Add Directory から検索対象を登録してください。");
       return;
     }
-    if (!query.trim()) { clearPreview(); $("meta").textContent = "キーワードを入力してください。"; return; }
+    if (!query.trim() && !S.filtered(options)) { clearPreview(); $("meta").textContent = "キーワードを入力してください。"; return; }
     const current = () => ticket === searchGeneration && id === model.activeId && session === model.sessions.get(id);
     try {
-      const rows = await S.search(session.snapshot, query, 100, () => !current());
+      const rows = await S.search(session.snapshot, query, 100, () => !current(), options);
       if (!current()) return;
-      const display = await displayChildren(session, rows, query, current);
+      const display = await displayChildren(session, rows, query, current, options);
       if (!current()) return;
       const renderer = resultRenderer(session, query, ui, current, display);
       // Keep file selection while typing; remove previews outside results.
@@ -346,6 +320,9 @@
       cell.append(actions); tr.append(cell); $("roots").append(tr);
     }
   }
+  $("preview-close").addEventListener("click", () => { clearPreview(); state().selected = null;
+    document.querySelectorAll(".file[aria-pressed=true]").forEach(e => e.setAttribute("aria-pressed", "false")); });
+  for (const id of ["modified", "format"]) $(id).addEventListener("change", () => { clearPreview(); searchGeneration++; if (!composing) runSearch(); });
   $("root").addEventListener("change", () => choose($("root").value));
   $("query").addEventListener("compositionstart", () => { composing = true; clearTimeout(timer); searchGeneration++; clearPreview(); });
   $("query").addEventListener("compositionend", () => { composing = false; runSearch(); });

@@ -30,10 +30,31 @@
           <button id="settings-button" class="secondary" type="button">
             Settings
           </button>
-        </form>
+
+<div class="filters">
+  <label for="modified">更新日</label><select id="modified" aria-label="更新日"><option value="all">すべての期間</option>
+    <option value="7">過去7日以内</option>
+    <option value="14">過去14日以内</option>
+    <option value="30">過去30日以内</option>
+    <option value="60">過去60日以内</option>
+    <option value="180">過去180日以内</option></select>
+  <label for="format">ファイル形式</label><select id="format" aria-label="ファイル形式"><option value="all">すべての形式</option>
+    <option value="pdf">PDF</option>
+    <option value="jpg">JPG</option>
+    <option value="png">PNG</option>
+    <option value="excel">Excel</option>
+    <option value="powerpoint">PowerPoint</option>
+    <option value="word">Word</option>
+    <option value="txt">TXT</option>
+    <option value="dwg">DWG</option>
+    <option value="revit">Revit</option>
+    <option value="sketchup">SketchUp</option>
+    <option value="grasshopper">Grasshopper</option></select>
+</div>
+</form>
         <p id="meta" class="meta" aria-live="polite"></p>
-        <div class="workspace">
-          <aside class="preview-panel" aria-label="Preview">
+        <div id="workspace" class="workspace">
+          <aside id="preview-panel" hidden class="preview-panel" aria-label="Preview"><button id="preview-close" type="button" class="secondary preview-close" aria-label="プレビューを閉じる">×</button>
             <h1>Preview</h1>
             <div id="preview" class="preview" aria-live="polite"></div>
           </aside>

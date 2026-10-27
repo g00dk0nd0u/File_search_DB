@@ -17,9 +17,30 @@
 <select id="root" aria-label="検索対象ルート" disabled></select>
 <div class="query-group"><input id="query" aria-label="検索キーワード" placeholder="Enter keyword" autocomplete="off"><button id="search" disabled>Search</button></div>
 <button id="settings-button" type="button" class="secondary" disabled>Settings</button>
+
+<div class="filters">
+  <label for="modified">更新日</label><select id="modified" aria-label="更新日"><option value="all">すべての期間</option>
+    <option value="7">過去7日以内</option>
+    <option value="14">過去14日以内</option>
+    <option value="30">過去30日以内</option>
+    <option value="60">過去60日以内</option>
+    <option value="180">過去180日以内</option></select>
+  <label for="format">ファイル形式</label><select id="format" aria-label="ファイル形式"><option value="all">すべての形式</option>
+    <option value="pdf">PDF</option>
+    <option value="jpg">JPG</option>
+    <option value="png">PNG</option>
+    <option value="excel">Excel</option>
+    <option value="powerpoint">PowerPoint</option>
+    <option value="word">Word</option>
+    <option value="txt">TXT</option>
+    <option value="dwg">DWG</option>
+    <option value="revit">Revit</option>
+    <option value="sketchup">SketchUp</option>
+    <option value="grasshopper">Grasshopper</option></select>
+</div>
 </form>
 <p id="meta" role="status">登録情報を読み込んでいます…</p>
-<div class="workspace"><aside aria-label="プレビュー"><h2 id="preview-title">Preview</h2><div id="preview"><p class="hint">ファイルを選択してください。</p></div></aside><div id="results" role="region" aria-label="検索結果"></div></div>
+<div id="workspace" class="workspace"><aside id="preview-panel" hidden aria-label="プレビュー"><button id="preview-close" type="button" class="secondary preview-close" aria-label="プレビューを閉じる">×</button><h2 id="preview-title">Preview</h2><div id="preview"><p class="hint">ファイルを選択してください。</p></div></aside><div id="results" role="region" aria-label="検索結果"></div></div>
 </section>
 <section id="settings-view" aria-label="Folder Manager" hidden>
 <div class="toolbar"><h1>Settings</h1><button id="add" disabled>Add Directory</button><button id="back" class="secondary">Back to Search</button></div>

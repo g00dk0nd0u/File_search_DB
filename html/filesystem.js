@@ -30,7 +30,11 @@
         if (child.kind === "directory") {
           folders.push(item);
           stack.push({ handle: child, path, depth: item.depth });
-        } else if (child.kind === "file") files.push(item);
+        } else if (child.kind === "file") {
+          const file = await child.getFile();
+          if (signal?.aborted) throw new DOMException("Scan cancelled", "AbortError");
+          files.push({ ...item, lastModified: file.lastModified });
+        }
         if (++count % 200 === 0) {
           progress({ folders: folders.length - 1, files: files.length });
           await new Promise((r) => setTimeout(r, 0));

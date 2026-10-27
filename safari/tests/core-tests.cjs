@@ -142,3 +142,7 @@ test('IndexedDB blocked open never starts a late write',async()=> {
   const h=databaseHarness(), pending=h.storage.put({id:'a'},()=>true), rejection=assert.rejects(pending);
   h.requests[0].onblocked();h.requests[0].onsuccess();await rejection;assert.equal(h.txs.length,0);
 });
+
+require('node:test').test('shared date, extension, compound and post-filter limit contract', async () => {
+  await require('../../html/tests/filter-contract.cjs')(require('../search.js'));
+});
