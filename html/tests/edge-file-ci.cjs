@@ -417,7 +417,8 @@ async function compactUI() {
     for (let i=0;i<250;i++) {
       const name="ページ"+String(i).padStart(4,"0");
       snapshot.folders.push({name,path:name,parent:"",depth:1});
-      snapshot.files.push({name:"別.txt",path:name+"/別.txt",parent:name});
+      // Keep the pagination fixture out of the existing TXT-only checks.
+      snapshot.files.push({name:"別.bin",path:name+"/別.bin",parent:name});
     }
     for (const file of snapshot.files) file.lastModified = Date.now();
     const root = {id:"fixture",displayName:"健康",directoryName:"健康",handle:{
