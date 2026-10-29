@@ -58,7 +58,13 @@
             <h1>Preview</h1>
             <div id="preview" class="preview" aria-live="polite"></div>
           </aside>
-          <div id="results" role="region" aria-label="Search results"></div>
+          <div id="result-column">
+            <div id="results" role="region" aria-label="Search results"></div>
+            <div id="result-controls" class="result-controls" hidden>
+              <span>表示済み / 総件数: <span id="result-count" role="status" aria-live="polite"></span></span>
+              <button id="result-more" type="button" class="secondary">さらに100件表示</button>
+            </div>
+          </div>
         </div>
       </section>
       <section id="settings-view" aria-label="Folder Manager" hidden>

@@ -405,13 +405,20 @@ async function compactUI() {
   const diagnostics = watch(page, "compact-ui-synthetic-data");
   await page.addInitScript(() => {
     const snapshot = {
-      folders: [{name:"健康",path:"",parent:null,depth:0},{name:"sub",path:"sub",parent:"",depth:1}],
+      folders: [{name:"健康",path:"",parent:null,depth:0},{name:"sub",path:"sub",parent:"",depth:1},
+        {name:"保管専用",path:"保管専用",parent:"",depth:1},{name:"deep",path:"保管専用/deep",parent:"保管専用",depth:2}],
       files: [
         {name:"健康保険証.txt",path:"健康保険証.txt",parent:""},
         {name:"旅行写真.jpg",path:"旅行写真.jpg",parent:""},
         {name:"健康診断.txt",path:"sub/健康診断.txt",parent:"sub"},
+        {name:"資料.txt",path:"保管専用/deep/資料.txt",parent:"保管専用/deep"},
       ],
     };
+    for (let i=0;i<250;i++) {
+      const name="ページ"+String(i).padStart(4,"0");
+      snapshot.folders.push({name,path:name,parent:"",depth:1});
+      snapshot.files.push({name:"別.txt",path:name+"/別.txt",parent:name});
+    }
     for (const file of snapshot.files) file.lastModified = Date.now();
     const root = {id:"fixture",displayName:"健康",directoryName:"健康",handle:{
       queryPermission: async()=>"granted",
@@ -485,6 +492,30 @@ async function compactUI() {
     await page.locator("#modified").selectOption("7");
     await page.waitForFunction(()=>document.querySelector("#results")?.textContent.includes("健康診断.txt"));
     await evidence(page,"filter-only-mobile");
+    assert.deepEqual(diagnostics.errors,[]);
+  },page);
+  await check("name-only folder and 250 paged results", "real Edge file:// with synthetic handles/data", async()=>{
+    await page.locator("#format").selectOption("all");
+    await page.locator("#modified").selectOption("all");
+    await page.locator("#query").fill("保管専用");
+    await page.locator("#search").click();
+    await page.waitForFunction(()=>document.querySelector("#result-count").textContent==="1 / 1");
+    const folder=page.locator("#results .folder-toggle").first();
+    assert.equal(await folder.getAttribute("aria-expanded"),"false");
+    await folder.click();
+    assert.equal(await page.getByRole("button",{name:"資料.txt",exact:true}).count(),1);
+    await page.locator("#query").fill("ページ");
+    await page.locator("#search").click();
+    await page.waitForFunction(()=>document.querySelector("#result-count").textContent==="100 / 250");
+    assert.equal(await page.locator("#results > .result").count(),100);
+    await page.locator("#result-more").click();
+    assert.equal(await page.locator("#result-count").textContent(),"200 / 250");
+    await page.locator("#result-more").click();
+    assert.equal(await page.locator("#result-count").textContent(),"250 / 250");
+    assert.equal(await page.locator("#results > .result").count(),250);
+    assert.equal(await page.locator("#result-more").isVisible(),false);
+    const labels=await page.locator("#results .folder-toggle").allTextContents();
+    assert.equal(new Set(labels).size,250);
     assert.deepEqual(diagnostics.errors,[]);
   },page);
   await page.close();

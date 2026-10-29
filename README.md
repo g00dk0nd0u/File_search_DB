@@ -12,6 +12,8 @@ The current implementation supports the following:
 
 No `pip install` step is required.
 
+For direct-open, dependency-free browser versions, see [Windows Edge](html/README.md) and [Mac Safari](safari/README.md). They search all matching folders and display them in batches of 100; their folder-name-only expansion and date/format filtering are described in those guides.
+
 ## Environment
 
 - Python 3

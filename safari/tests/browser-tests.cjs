@@ -18,6 +18,12 @@ const assert=require('node:assert/strict');
   await fs.writeFile(path.join(other,'only-other.txt'),'other');
   await fs.writeFile(path.join(root,'日本語','sample.pdf'),'%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 0/Kids[]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF');
   await fs.writeFile(path.join(root,'日本語','長い名前'.repeat(20)+'.txt'),'long');
+  await fs.mkdir(path.join(root,'保管専用','deep'),{recursive:true});
+  await fs.writeFile(path.join(root,'保管専用','deep','資料.txt'),'other');
+  for(let i=0;i<250;i++) {
+    const dir=path.join(root,'ページ'+String(i).padStart(4,'0'));
+    await fs.mkdir(dir); await fs.writeFile(path.join(dir,'別.txt'),'other');
+  }
   const browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE?{executablePath:process.env.CHROMIUM_EXECUTABLE}:{})});
   const page=await browser.newPage({viewport:{width:1440,height:900}}), errors=[], remote=[];
   page.on('pageerror',e=>errors.push(e.message));
@@ -38,16 +44,10 @@ const assert=require('node:assert/strict');
       assert.equal(await page.locator('#root').getAttribute('aria-label'),'検索対象ルート');
       assert.equal(await page.locator('label[for=root], #reselect, .footer, #search-view .hint:not(#preview .hint)').count(),0);
     });
-    await check('compact preview-first 2:1 desktop layout and empty height',async()=>{
-      const layout=await page.evaluate(()=>{
-        const preview=document.querySelector('aside'),results=document.querySelector('#results');
-        const a=preview.getBoundingClientRect(),b=results.getBoundingClientRect();
-        return {first:document.querySelector('.workspace').firstElementChild===preview,
-          left:a.x<b.x,ratio:a.width/b.width,height:a.height,font:getComputedStyle(document.documentElement).fontSize,
-          sticky:getComputedStyle(preview).position,overflow:document.documentElement.scrollWidth>innerWidth};
-      });
-      assert.equal(layout.first,true);assert.equal(layout.left,true);assert.ok(Math.abs(layout.ratio-2)<.02);
-      assert.ok(layout.height>=316);assert.equal(layout.font,'14px');assert.equal(layout.sticky,'sticky');assert.equal(layout.overflow,false);
+    await check('preview starts closed and results use full width',async()=>{
+      assert.equal(await page.locator('#preview-panel').isVisible(),false);
+      assert.equal(await page.evaluate(()=>document.querySelector('.workspace').firstElementChild===document.querySelector('aside')),true);
+      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
     });
     await check('Settings-only keyboard theme toggle survives reload without touching IndexedDB',async()=>{
       await page.locator('#settings-button').click();
@@ -74,6 +74,13 @@ const assert=require('node:assert/strict');
       assert.deepEqual(await page.getByRole('button',{name:'alpha beta.txt',exact:true}).locator('mark').allTextContents(),['alpha beta']);
       await page.getByRole('button',{name:'alpha beta.txt',exact:true}).click();
       await textContains(page.locator('#preview pre'),'日本語のテキスト <script>安全な文字列</script>');
+      const layout=await page.evaluate(()=>{
+        const preview=document.querySelector('aside'),results=document.querySelector('#results');
+        const a=preview.getBoundingClientRect(),b=results.getBoundingClientRect();
+        return {left:a.x<b.x,ratio:a.width/b.width,height:a.height,sticky:getComputedStyle(preview).position};
+      });
+      assert.equal(layout.left,true);assert.ok(Math.abs(layout.ratio-2)<.02);
+      assert.ok(layout.height>=316);assert.equal(layout.sticky,'sticky');
       assert.equal(await page.locator('#preview script').count(),0);
       await page.screenshot({path:'/tmp/safari-search-desktop.png',fullPage:true});
     });
@@ -95,12 +102,29 @@ const assert=require('node:assert/strict');
       await page.getByRole('button',{name:'sample.png',exact:true}).click();
       await page.waitForFunction(()=>document.querySelector('#preview img')?.naturalWidth===1);
     });
-    await check('folder-only hit filters unrelated files while keeping deep path; long names wrap',async()=>{
+    await check('descendant match filters unrelated files while keeping deep path; long names wrap',async()=>{
       await query('日本語 OR gamma');await results(2);
       assert.equal(await page.getByRole('button',{name:'alpha beta.txt',exact:true}).count(),0);
       assert.ok(await page.getByRole('button',{name:'gamma delta.txt',exact:true}).count()>0);
       await query('長い名前');await results(1);
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    });
+    await check('name-only folder starts closed and results page in batches',async()=>{
+      await query('保管専用');await results(1);
+      assert.equal(await page.locator('#results > details').evaluate(e=>e.open),false);
+      await page.locator('#results > details > summary').click();
+      await page.getByRole('button',{name:'資料.txt',exact:true}).waitFor();
+      await query('ページ');
+      await page.waitForFunction(()=>document.querySelector('#result-count').textContent==='100 / 250');
+      assert.equal(await page.locator('#results > details').count(),100);
+      await page.locator('#result-more').click();
+      assert.equal(await page.locator('#result-count').textContent(),'200 / 250');
+      await page.locator('#result-more').click();
+      assert.equal(await page.locator('#result-count').textContent(),'250 / 250');
+      assert.equal(await page.locator('#results > details').count(),250);
+      assert.equal(await page.locator('#result-more').isVisible(),false);
+      const names=await page.locator('#results > details > summary').allTextContents();
+      assert.equal(new Set(names).size,250);
     });
     await check('PDF frame uses Blob URL and viewport-bounded expanded height',async()=>{
       await query('sample.pdf');await results(1);await page.getByRole('button',{name:'sample.pdf',exact:true}).click();

@@ -170,7 +170,8 @@ select {
   align-items: start;
   margin-top: 12px;
 }
-#results { min-width: 0; }
+#result-column, #results { min-width: 0; }
+.result-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 12px 0; }
 .preview-panel {
   position: sticky;
   top: 12px;
