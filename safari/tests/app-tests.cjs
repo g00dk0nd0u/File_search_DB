@@ -22,7 +22,7 @@ async function harness(records=[],search=S.search,preferences=new Map(),storageF
    setAttribute(k,v){this.attrs[k]=v;} getAttribute(k){return this.attrs[k];}
    remove(){this.parent.children=this.parent.children.filter(c=>c!==this);}
  }
- const ids=Object.fromEntries(['modified','format','preview-close','preview-panel','workspace','search-view','settings-view','query','root','picker','preview','preview-title','results','roots','notice','meta','search','search-form','settings-button','back','add','theme-toggle','theme-status'].map(id=>[id,new Element()]));
+ const ids=Object.fromEntries(['result-controls','result-count','result-more','modified','format','preview-close','preview-panel','workspace','search-view','settings-view','query','root','picker','preview','preview-title','results','roots','notice','meta','search','search-form','settings-button','back','add','theme-toggle','theme-status'].map(id=>[id,new Element()]));
  ids.modified.value=ids.format.value="all";
  const all=()=>Object.values(ids).flatMap(e=>[e,...desc(e)]);
  const desc=e=>e.children.flatMap(c=>[c,...desc(c)]);
@@ -124,14 +124,14 @@ test('result and nested folders open initially, files and nested highlights are 
  assert.equal(h.buttons().some(e=>e.textContent==='実施設計図一式.pdf'),false);
 });
 test('manual collapse survives same-query redraw and reopens on changed query',async()=>{
- const h=await harness();await h.pick([file('Root/alpha/alpha_child/file.txt')]);await h.query('alpha');
+ const h=await harness();await h.pick([file('Root/alpha/alpha_child/alpha_file.txt')]);await h.query('alpha');
  await toggle(namedFolder(h,'alpha_child'),false);await toggle(namedFolder(h,'alpha'),false);
  await h.query('alpha');assert.equal(namedFolder(h,'alpha').open,false);
  await toggle(namedFolder(h,'alpha'),true);await settle(h);assert.equal(namedFolder(h,'alpha_child').open,false);
  await h.query('alpha OR file');await settle(h);assert.ok(folders(h).every(e=>e.open));
 });
 test('root switches keep collapse choices isolated for the same query',async()=>{
- const h=await harness();await h.pick([file('A/alpha/one.txt')]);await h.pick([file('B/alpha/two.txt')]);
+ const h=await harness();await h.pick([file('A/alpha/alpha_one.txt')]);await h.pick([file('B/alpha/alpha_two.txt')]);
  await h.query('alpha');await toggle(namedFolder(h,'alpha'),false);
  h.ids.root.value='1';await h.ids.root.emit('change');await h.tick();assert.equal(namedFolder(h,'alpha').open,true);
  h.ids.root.value='2';await h.ids.root.emit('change');await h.tick();assert.equal(namedFolder(h,'alpha').open,false);
@@ -281,4 +281,71 @@ test('filter-only changes rerun cached search, prune files and close preview',as
  await h.buttons()[0].click();h.ids.modified.value='7';await h.ids.modified.emit('change');await h.tick();
  assert.deepEqual([...new Set(h.buttons().map(b=>b.textContent))],['alpha.PDF']);assert.equal(h.ids['preview-panel'].hidden,true);
  await h.query('alpha -draft');assert(h.buttons().every(b=>b.textContent==='alpha.PDF'));
+});
+
+const waitFor = async predicate => {
+ const end=Date.now()+15000;
+ while(Date.now()<end){if(predicate())return;await new Promise(r=>setTimeout(r,2));}
+ throw Error('Timed out waiting for result');
+};
+test('name-only results open to eligible deep files; descendant matches remain selective',async()=>{
+ const h=await harness(),now=Date.now(),day=86400000;
+ const paths=['Root/alpha only/one/two/three/four/report.pdf','Root/alpha only/one/two/three/four/alpha.txt',
+  'Root/alpha only/old/old.pdf','Root/alpha both/bridge/alpha.pdf','Root/alpha both/bridge/other.pdf','Root/alpha empty/old.pdf','Root/alpha solo/deep/unrelated.md'];
+ let reads=0;
+ const files=paths.map((path,i)=>{const f=file(path);f.lastModified=now-([2,5].includes(i)?8*day:0);const slice=f.slice;f.slice=(...args)=>{reads++;return slice(...args);};return f;});
+ await h.pick(files);reads=0;await h.query('alpha');await settle(h);
+ assert.equal(namedFolder(h,'alpha only').open,true);
+ assert.equal(h.buttons().some(b=>b.textContent==='other.pdf'),false);
+ assert.equal(namedFolder(h,'alpha solo').open,false);
+ await toggle(namedFolder(h,'alpha solo'),true);await settle(h);
+ assert.equal(h.buttons().some(b=>b.textContent==='unrelated.md'),true);
+ h.ids.format.value='pdf';await h.ids.format.emit('change');h.ids.modified.value='7';await h.ids.modified.emit('change');
+ await waitFor(()=>h.ids['result-count'].textContent==='3 / 3');await settle(h);
+ const only=namedFolder(h,'alpha only'),both=namedFolder(h,'alpha both');
+ assert.equal(only.open,false);assert.equal(both.open,true);assert.equal(namedFolder(h,'alpha empty'),undefined);
+ assert.equal(h.buttons().some(b=>b.textContent==='alpha.pdf'),true);
+ assert.equal(h.buttons().some(b=>b.textContent==='other.pdf'),false);
+ await toggle(only,true);await settle(h);
+ assert.equal(h.buttons().some(b=>b.textContent==='report.pdf'),true);
+ assert.equal(h.buttons().some(b=>b.textContent==='old.pdf'||b.textContent==='alpha.txt'),false);
+ assert.equal(reads,0);
+ await h.buttons().find(b=>b.textContent==='report.pdf').click();assert(reads>0);assert.equal(h.ids['preview-panel'].hidden,false);
+ await h.ids['preview-close'].click();assert.equal(h.ids['preview-panel'].hidden,true);
+ await h.query('alpha');await settle(h);assert.equal(namedFolder(h,'alpha only').open,true);
+});
+for(const total of [100,101,250,1205]) test(`folder result pagination: ${total}`,async()=>{
+ const h=await harness();
+ const files=Array.from({length:total},(_,i)=>file('Root/hit'+String(total-i-1).padStart(4,'0')+'/other.txt'));
+ await h.pick(files);await h.query('hit');
+ await waitFor(()=>h.ids['result-count'].textContent===`${Math.min(100,total)} / ${total}`);
+ assert.equal(h.ids.results.children.length,Math.min(100,total));assert.equal(h.ids['result-more'].hidden,total<=100);
+ let shown=Math.min(100,total);
+ while(shown<total){await h.ids['result-more'].click();shown=Math.min(shown+100,total);assert.equal(h.ids['result-count'].textContent,`${shown} / ${total}`);assert.equal(h.ids.results.children.length,shown);}
+ assert.equal(h.ids['result-more'].hidden,true);
+ const names=h.ids.results.children.map(e=>e.children[0].textContent);
+ assert.equal(new Set(names).size,total);assert.deepEqual(names,Array.from({length:total},(_,i)=>'hit'+String(i).padStart(4,'0')));
+ await h.query('hit000');await waitFor(()=>h.ids['result-count'].textContent==='10 / 10');
+ assert.equal(h.ids.results.children.length,10);assert.equal(h.ids['result-more'].hidden,true);
+});
+test('paging resets on filters and root switch, and stale queued pages never append',async()=>{
+ const h=await harness(),files=Array.from({length:250},(_,i)=>{const f=file('A/hit'+String(i).padStart(4,'0')+'/other.pdf');f.lastModified=Date.now();return f;});
+ await h.pick(files);await h.pick([file('B/hit-other.txt')]);
+ h.ids.root.value='1';await h.ids.root.emit('change');await h.query('hit');await waitFor(()=>h.ids['result-count'].textContent==='100 / 250');
+ await h.ids['result-more'].click();assert.equal(h.ids['result-count'].textContent,'200 / 250');
+ h.ids.format.value='pdf';await h.ids.format.emit('change');await waitFor(()=>h.ids['result-count'].textContent==='100 / 250');
+ h.ids.root.value='2';await h.ids.root.emit('change');await waitFor(()=>h.ids['result-count'].textContent==='0 / 0');
+ assert.equal(h.ids.results.children.length,0);assert.equal(h.ids['result-more'].hidden,true);
+ h.ids.format.value='all';await h.ids.format.emit('change');await waitFor(()=>h.ids['result-count'].textContent==='1 / 1');
+ assert.equal(h.ids.results.children.length,1);assert.equal(h.ids.results.children[0].children[0].textContent,'B');
+});
+test('large file-match results expand within the shared child budget without body reads',async()=>{
+ const h=await harness();let reads=0;
+ const files=Array.from({length:1205},(_,i)=>{const f=file('Root/folder'+String(i).padStart(4,'0')+'/needle.txt'),slice=f.slice;f.slice=(...args)=>{reads++;return slice(...args);};return f;});
+ await h.pick(files);reads=0;await h.query('needle');
+ await waitFor(()=>h.ids['result-count'].textContent==='100 / 1205'&&h.buttons().length===100);
+ assert.equal(h.ids.results.children.length,100);
+ await h.ids['result-more'].click();await h.ids['result-more'].click();
+ await waitFor(()=>h.ids['result-count'].textContent==='300 / 1205'&&h.buttons().length===300);
+ assert.equal(reads,0);
 });

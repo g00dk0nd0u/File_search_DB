@@ -22,7 +22,13 @@
     expansionContext: null,
     selected: {},
   };
-  const urls = new Map();
+  const urls = new Map(), childIndexes = new WeakMap();
+  function resetPaging() {
+    $("result-controls").hidden = true;
+    $("result-more").hidden = true;
+    $("result-more").onclick = null;
+    $("result-count").textContent = "";
+  }
   // A failed automatic attempt is retried only by explicit user action.
   const attempted = new Set(),
     scans = new Map(),
@@ -42,6 +48,7 @@
     snapshot = undefined;
     clearPreviews();
     $("results").replaceChildren();
+    resetPaging();
     $("meta").textContent =
       "Read access required. Open Settings → Allow access / Reselect.";
   }
@@ -300,6 +307,7 @@
     snapshot = undefined;
     clearPreviews();
     $("results").replaceChildren();
+    resetPaging();
     $("meta").textContent = "";
     renderRoots();
     ui.rootId = activeId;
@@ -468,6 +476,7 @@
   $("query").oninput = () => {
     clearTimeout(searchTimer);
     ++generation;
+    resetPaging();
     clearPreviews();
     ui.query = $("query").value;
     if (!composing) searchTimer = setTimeout(submitSearch, 250);
@@ -487,7 +496,7 @@
     }
   };
   for (const id of ["modified", "format"]) $(id).onchange = () => {
-    ++generation; clearPreviews(); if (!composing) submitSearch();
+    ++generation; resetPaging(); clearPreviews(); if (!composing) submitSearch();
   };
   function paneMessage(pane, text) {
     revoke(pane);
@@ -609,6 +618,7 @@
     let cursor = 0;
     const more = element("button", "Show more items", "secondary more-items");
     const render = () => {
+      if (tree && !tree.current()) return;
       more.hidden = true;
       let count = 0;
       while (cursor < items.length && count < 100 && (!tree || tree.budget.left > 0)) {
@@ -626,6 +636,7 @@
         if (item.kind === "directory") b.append(document.createTextNode("/"));
         highlight(b, item.name, queryText);
         b.onclick = () => {
+          if (tree && !tree.current()) return;
           if (onSelect) onSelect(item.path);
           for (const child of $("results").querySelectorAll(".item")) {
             child.classList.remove("selected");
@@ -659,6 +670,7 @@
             }
           };
           toggle.onclick = () => {
+            if (!tree.current()) return;
             const open = children.hidden;
             expansion(key, open);
             tree.budget.left = Math.max(tree.budget.left, 100);
@@ -676,6 +688,7 @@
       }
     };
     more.onclick = () => {
+      if (tree && !tree.current()) return;
       if (tree) tree.budget.left = 100;
       render();
     };
@@ -692,6 +705,7 @@
     const context = JSON.stringify([activeId, queryText, options.days, options.format]);
     if (context !== previewContext) { clearPreviews(); previewContext = context; }
     $("results").replaceChildren();
+    resetPaging();
     if (!root) {
       $("meta").textContent =
         "No search target folders. Open Settings → Add Directory.";
@@ -714,7 +728,6 @@
     const rows = await S.search(
       localSnapshot,
       queryText,
-      100,
       () => version !== generation,
       options,
     );
@@ -724,30 +737,27 @@
       hideDenied(root);
       return;
     }
-    $("meta").textContent = rows.length || !queryText.trim() ? "" : "No matching folders or files.";
+    $("meta").textContent = rows.length || (!queryText.trim() && !S.filtered(options)) ? "" : "No matching folders or files.";
     if (options.days !== "all" && options.days && localSnapshot.files.some(file => !Number.isFinite(file.lastModified)))
       $("meta").textContent += " 更新日時が不明な旧索引のファイルは除外しています。Settings → Reload を実行してください。";
-    // Build once per render rather than rescanning the full index per tree node.
-    const children = new Map(), byPath = new Map(), budget = { left: 500 };
-    const {visible} = await S.visibility(localSnapshot, queryText, options, () => version !== generation);
-    if (version !== generation) return;
-    let indexed = 0;
-    for (const [entries, kind] of [[localSnapshot.folders, "directory"], [localSnapshot.files, "file"]]) {
-      for (const item of rows.length ? entries : []) {
-        if (item.path === "" || !visible.has(item.path)) continue;
-        if (!children.has(item.parent)) children.set(item.parent, []);
-        const child = { ...item, kind };
-        children.get(item.parent).push(child);
-        byPath.set(item.path, child);
-        if (++indexed % 500 === 0) {
-          await S.pause();
-          if (version !== generation) return;
-        }
+    if (!rows.length) {
+      if (queryText.trim() || S.filtered(options)) {
+        $("result-controls").hidden = false;
+        $("result-count").textContent = "0 / 0";
       }
+      clearPreviews(); autoRefresh(root); return;
     }
-    for (const items of children.values()) items.sort((a, b) =>
-      (a.kind === b.kind ? 0 : a.kind === "directory" ? -1 : 1) ||
-      S.compare(S.fold(a.name), S.fold(b.name)));
+    const budget = { left: 500 }, cancelled = () => version !== generation;
+    const display = await S.visibility(localSnapshot, queryText, options, cancelled);
+    if (cancelled()) return;
+    let index = childIndexes.get(localSnapshot);
+    if (!index) {
+      index = await S.childIndex(localSnapshot, cancelled);
+      if (!index || cancelled()) return;
+      childIndexes.set(localSnapshot, index);
+    }
+    const lists = await S.displayIndex(index, display, cancelled);
+    if (!lists || cancelled()) return;
     // Building the child index yields too: permissions/root/query may have
     // changed since the check after search. Never publish stale/denied results.
     const renderAllowed = await readable(root);
@@ -757,64 +767,86 @@
       return;
     }
     const pane = $("preview");
-    const selected = Object.values(ui.selected).map(path => byPath.get(path)).find(item => item?.kind === "file");
+    const selected = Object.values(ui.selected).find(path => S.containsFile(rows, display, path));
     if (!selected && !$("preview-panel").hidden) clearPreviews();
     // Drop selections that disappeared after a refresh or no longer match.
-    ui.selected = Object.fromEntries(Object.entries(ui.selected).filter(([, path]) => byPath.get(path)?.kind === "file"));
+    ui.selected = Object.fromEntries(Object.entries(ui.selected).filter(([, path]) => S.containsFile(rows, display, path)));
     saveUI();
-    for (const row of rows) {
-      const article = element("article", undefined, "result"),
-        header = element("div", undefined, "result-header");
-      const toggle = element("button", undefined, "link folder-toggle");
-      const parent = row.path.split("/").slice(0, -1).join("/");
-      if (parent) {
-        const path = element("span", undefined, "path");
-        highlight(path, parent + " / ", queryText);
-        toggle.append(path);
-      }
-      const arrow = element("span", "▸ ");
-      toggle.append(arrow);
-      highlight(toggle, row.name, queryText);
-      const detail = element("div", undefined, "detail");
-      detail.hidden = true;
-      const left = element("div", undefined, "children");
-      detail.append(left);
-      header.append(toggle);
-      article.append(header, detail);
-      $("results").append(article);
-      let populated = false;
-      const expand = (open) => {
-        detail.hidden = !open;
-        arrow.textContent = open ? "▾ " : "▸ ";
-        toggle.setAttribute("aria-expanded", String(!detail.hidden));
+    let cursor = 0, paging = false;
+    const appendNext = async () => {
+      if (cancelled() || paging) return;
+      paging = true;
+      $("result-more").disabled = true;
+      try {
+        const allowed = await readable(root);
+        if (cancelled()) return;
+        if (!allowed || blocked.has(root.id)) { hideDenied(root); return; }
+        const end = Math.min(cursor + 100, rows.length);
+        while (cursor < end) {
+          const row = rows[cursor++], children = row.showAll ? lists.all : lists.matched;
+          const article = element("article", undefined, "result"),
+            header = element("div", undefined, "result-header");
+          const toggle = element("button", undefined, "link folder-toggle");
+          const parent = row.path.split("/").slice(0, -1).join("/");
+          if (parent) {
+            const path = element("span", undefined, "path");
+            highlight(path, parent + " / ", queryText);
+            toggle.append(path);
+          }
+          const arrow = element("span", "▸ ");
+          toggle.append(arrow);
+          highlight(toggle, row.name, queryText);
+          const detail = element("div", undefined, "detail");
+          detail.hidden = true;
+          const left = element("div", undefined, "children");
+          detail.append(left);
+          header.append(toggle);
+          article.append(header, detail);
+          $("results").append(article);
+          let populated = false;
+          const expand = (open) => {
+            detail.hidden = !open;
+            arrow.textContent = open ? "▾ " : "▸ ";
+            toggle.setAttribute("aria-expanded", String(!detail.hidden));
 
-        if (!detail.hidden && !populated) {
-          populated = true;
-          listItems(
-            left,
-            children.get(row.path) || [],
-            pane,
-            localSnapshot,
-            root,
-            queryText,
-            (path) => {
-              ui.selected = { [row.path]: path };
-              saveUI();
-            },
-            { children, budget, rowPath: row.path },
-          );
+            if (!detail.hidden && !populated) {
+              populated = true;
+              listItems(
+                left,
+                children.get(row.path) || [],
+                pane,
+                localSnapshot,
+                root,
+                queryText,
+                (path) => {
+                  ui.selected = { [row.path]: path };
+                  saveUI();
+                },
+                { children, budget, rowPath: row.path, current: () => !cancelled() },
+              );
+            }
+          };
+          toggle.setAttribute("aria-expanded", "false");
+          toggle.onclick = () => {
+            if (cancelled()) return;
+            const open = detail.hidden;
+            expansion(row.path, open);
+            budget.left = Math.max(budget.left, 100);
+            expand(open);
+          };
+          expand(ui.expanded.includes(row.path) || (!row.showAll && !ui.collapsed.includes(row.path)));
         }
-      };
-      toggle.setAttribute("aria-expanded", "false");
-      toggle.onclick = () => {
-        const open = detail.hidden;
-        expansion(row.path, open);
-        budget.left = Math.max(budget.left, 100);
-        expand(open);
-      };
-      expand(!ui.collapsed.includes(row.path));
-    }
-    autoRefresh(root);
+        $("result-count").textContent = `${cursor} / ${rows.length}`;
+        $("result-controls").hidden = false;
+        $("result-more").hidden = cursor >= rows.length;
+      } finally {
+        paging = false;
+        if (!cancelled()) $("result-more").disabled = false;
+      }
+    };
+    $("result-more").onclick = appendNext;
+    await appendNext();
+    if (!cancelled()) autoRefresh(root);
   }
   window.addEventListener("pagehide", clearPreviews);
   try {

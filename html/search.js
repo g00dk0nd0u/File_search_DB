@@ -413,35 +413,114 @@
     }
     return true;
   }
-  // Shared display contract: only matching files and required ancestors survive.
-  // Parent buckets and sets keep this linear even for large/deep indexes.
+  // Keep keyword matches separate from filter-eligible files. A result folder
+  // can use either set without rescanning its descendants on every expansion.
   async function visibility(snapshot, queryText, options = {}, cancelled = () => false) {
     const query = parse(queryText), hasQuery = !!(query.groups.length || query.excluded.length);
     const visible = new Set(), files = new Set(), ancestors = new Set();
-    const parents = new Map(snapshot.folders.map(folder => [folder.path, folder.parent]));
+    const eligibleFiles = new Set(), eligibleAncestors = new Set(), allVisible = new Set();
+    const parents = new Map();
+    let count = 0;
+    for (const folder of snapshot.folders) {
+      parents.set(folder.path, folder.parent);
+      if (!filtered(options)) allVisible.add(folder.path);
+      if (++count % 500 === 0) { await pause(); if (cancelled()) return {visible, files, ancestors, eligibleFiles, eligibleAncestors, allVisible}; }
+    }
     function ascend(path, target) {
       while (path != null && !target.has(path)) {
         target.add(path); path = parents.get(path);
       }
     }
-    let count = 0;
     for (const file of snapshot.files) {
-      if (eligible(file, options) && (!hasQuery || matches(file.name, query))) {
-        files.add(file.path); visible.add(file.path); ascend(file.parent, ancestors);
+      if (eligible(file, options)) {
+        eligibleFiles.add(file.path); allVisible.add(file.path); ascend(file.parent, eligibleAncestors);
+        if (!hasQuery || matches(file.name, query)) {
+          files.add(file.path); visible.add(file.path); ascend(file.parent, ancestors);
+        }
       }
-      if (++count % 500 === 0) { await pause(); if (cancelled()) return {visible, files, ancestors}; }
+      if (++count % 500 === 0) { await pause(); if (cancelled()) return {visible, files, ancestors, eligibleFiles, eligibleAncestors, allVisible}; }
     }
-    for (const path of ancestors) visible.add(path);
-    if (!filtered(options) && hasQuery) for (const folder of snapshot.folders) {
-      if (matches(folder.name, query)) ascend(folder.path, visible);
-      if (++count % 500 === 0) { await pause(); if (cancelled()) break; }
+    for (const path of ancestors) {
+      visible.add(path);
+      if (++count % 500 === 0) { await pause(); if (cancelled()) return {visible, files, ancestors, eligibleFiles, eligibleAncestors, allVisible}; }
     }
-    return {visible, files, ancestors};
+    if (filtered(options)) for (const path of eligibleAncestors) {
+      allVisible.add(path);
+      if (++count % 500 === 0) { await pause(); if (cancelled()) return {visible, files, ancestors, eligibleFiles, eligibleAncestors, allVisible}; }
+    }
+    return {visible, files, ancestors, eligibleFiles, eligibleAncestors, allVisible};
+  }
+  // Native sort on a very large sibling list can block the UI for a long time.
+  // Sort small runs and cooperatively merge them; the comparator remains the
+  // same as before and old searches can be cancelled at each yield.
+  async function sortCooperatively(items, comparator, cancelled) {
+    const size = 1000;
+    let runs = [];
+    for (let i = 0; i < items.length; i += size) {
+      runs.push(items.slice(i, i + size).sort(comparator));
+      if (items.length > size) { await pause(); if (cancelled()) return null; }
+    }
+    while (runs.length > 1) {
+      const next = [];
+      let processed = 0;
+      for (let n = 0; n < runs.length; n += 2) {
+        if (n + 1 === runs.length) { next.push(runs[n]); continue; }
+        const a = runs[n], b = runs[n + 1], merged = [];
+        let i = 0, j = 0;
+        while (i < a.length || j < b.length) {
+          merged.push(j >= b.length || (i < a.length && comparator(a[i], b[j]) <= 0) ? a[i++] : b[j++]);
+          if (++processed % 4000 === 0) { await pause(); if (cancelled()) return null; }
+        }
+        next.push(merged);
+      }
+      runs = next;
+    }
+    return runs[0] || [];
+  }
+  async function childIndex(snapshot, cancelled = () => false) {
+    const index = new Map();
+    let processed = 0;
+    for (const [entries, kind] of [[snapshot.folders, "directory"], [snapshot.files, "file"]]) {
+      for (const item of entries) {
+        if (item.path === "") continue;
+        if (!index.has(item.parent)) index.set(item.parent, []);
+        index.get(item.parent).push({ ...item, kind });
+        if (++processed % 500 === 0) { await pause(); if (cancelled()) return null; }
+      }
+    }
+    const comparator = (a, b) =>
+      (a.kind === b.kind ? 0 : a.kind === "directory" ? -1 : 1) || compare(fold(a.name), fold(b.name));
+    for (const [parent, items] of index) {
+      const sorted = await sortCooperatively(items, comparator, cancelled);
+      if (!sorted || cancelled()) return null;
+      index.set(parent, sorted);
+      if (++processed % 500 === 0) { await pause(); if (cancelled()) return null; }
+    }
+    return index;
+  }
+  async function displayIndex(index, display, cancelled = () => false) {
+    const all = new Map(), matched = new Map();
+    let processed = 0;
+    for (const [parent, items] of index) {
+      const fullItems = [], matchedItems = [];
+      for (const item of items) {
+        if (display.allVisible.has(item.path)) fullItems.push(item);
+        if (display.visible.has(item.path)) matchedItems.push(item);
+        if (++processed % 500 === 0) { await pause(); if (cancelled()) return null; }
+      }
+      if (fullItems.length) all.set(parent, fullItems);
+      if (matchedItems.length) matched.set(parent, matchedItems);
+    }
+    return {all, matched};
+  }
+  function containsFile(rows, display, path) {
+    if (!path || !display.eligibleFiles.has(path)) return false;
+    return rows.some(row => (row.path === "" || path.startsWith(row.path + "/")) &&
+      (row.showAll || display.files.has(path)));
   }
   async function search(
     snapshot,
     queryText,
-    limit = 100,
     cancelled = () => false,
     options = {},
   ) {
@@ -479,22 +558,25 @@
           : candidates.some((re) => re.test(asciiLower(folder.name))));
       const nameMatched = candidate && matches(folder.name, query),
         files = hits.get(folder.path) || [];
-      if ((nameMatched || files.length) && (!filtered(options) || display.ancestors.has(folder.path))) {
-        files.sort(
+      if ((nameMatched || files.length) && (!filtered(options) || display.eligibleAncestors.has(folder.path))) {
+        const sortedFiles = await sortCooperatively(files,
           (a, b) =>
             compare(fold(a.name), fold(b.name)) ||
             compare(fold(a.path), fold(b.path)),
+          cancelled,
         );
+        if (!sortedFiles || cancelled()) return [];
         results.push({
           ...folder,
           folderNameMatched: nameMatched,
+          showAll: nameMatched && !display.ancestors.has(folder.path),
           fileMatchCount: filtered(options) ? files.length : nameMatched
             ? positive.length
               ? counts.get(folder.path) || 0
               : 0
             : files.length,
-          matchedFileNames: [...new Set(files.map((f) => f.name))],
-          matchedFilePaths: files.map((f) => f.path),
+          matchedFileNames: [...new Set(sortedFiles.map((f) => f.name))],
+          matchedFilePaths: sortedFiles.map((f) => f.path),
           matchKind: nameMatched
             ? files.length
               ? "name+file"
@@ -507,13 +589,13 @@
         if (cancelled()) return [];
       }
     }
-    results.sort(
+    return await sortCooperatively(results,
       (a, b) =>
         a.depth - b.depth ||
         compare(fold(a.name), fold(b.name)) ||
         compare(fold(a.path), fold(b.path)),
-    );
-    return results.slice(0, limit);
+      cancelled,
+    ) || [];
   }
   function children(snapshot, path, queryText = "") {
     const query = parse(queryText),
@@ -538,7 +620,7 @@
       );
   }
   scope.FolderSearch = {
-    formats, filtered, eligible, visibility,
+    formats, filtered, eligible, visibility, childIndex, displayIndex, containsFile,
     fold,
     compare,
     parse,

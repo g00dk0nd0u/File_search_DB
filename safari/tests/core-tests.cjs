@@ -111,7 +111,7 @@ test('Shift-JIS and binary text preview', async()=> {
 test('large repeated searches yield, cancel and aggregate', async()=> {
   const snapshot={folders:[{name:'Root',path:'',depth:0,parent:null}],files:Array.from({length:25000},(_,i)=>({name:'item'+i,path:'item'+i,parent:''}))};
   let cancelled=false; setTimeout(()=>cancelled=true,0);
-  assert.deepEqual(await S.search(snapshot,'item',100,()=>cancelled),[]);
+  assert.deepEqual(await S.search(snapshot,'item',()=>cancelled),[]);
   for (const q of ['item','item -absent']) assert.equal((await S.search(snapshot,q))[0].fileMatchCount,25000);
 });
 // The adapter is checked at open and transaction boundaries, independent of the model.
@@ -143,6 +143,10 @@ test('IndexedDB blocked open never starts a late write',async()=> {
   h.requests[0].onblocked();h.requests[0].onsuccess();await rejection;assert.equal(h.txs.length,0);
 });
 
-require('node:test').test('shared date, extension, compound and post-filter limit contract', async () => {
+require('node:test').test('shared date, extension, compound and complete post-filter results contract', async () => {
   await require('../../html/tests/filter-contract.cjs')(require('../search.js'));
+});
+
+test('shared folder modes, pagination totals, filters and cancellation', async () => {
+  await require('../../html/tests/search-contract.cjs')(S);
 });

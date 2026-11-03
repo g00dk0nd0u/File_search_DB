@@ -202,6 +202,7 @@ async function test(name,fn){await fn();console.log("PASS "+name);count++;}
     const a=fixture("A"),snapshot=snap("A",Array.from({length:25000},(_,i)=>`file${i}.txt`));
     let parent="";
     for(let i=0;i<1500;i++){const path=parent+"/d";snapshot.folders.push({name:"d",path,parent,depth:i+1});parent=path;}
+    snapshot.files.push({name:"deep_hit.txt",path:parent+"/deep_hit.txt",parent,depth:1501});
     const x=await app([a],{snapshot,ui:{query:"txt OR d"}});await until(()=>a.state.scans===1);
     assert(cls(x.$("results"),"item").length<=500);
     const nested=cls(x.$("results"),"subfolder-toggle");assert(nested.length>=4);
@@ -303,6 +304,83 @@ async function test(name,fn){await fn();console.log("PASS "+name);count++;}
     x.$("modified").value="7";x.$("modified").onchange();await until(()=>x.$("meta").textContent.includes("Reload"));
     assert.match(x.$("results").textContent,/alpha.PDF/);assert.doesNotMatch(x.$("results").textContent,/old.pdf|unknown.pdf/);
     assert.equal(a.state.scans,1);assert.equal(x.$("preview-panel").hidden,true);
+  });
+  await test("name-only folders stay closed and reveal filtered descendants; descendant file matches stay selective",async()=>{
+    const a=fixture("Root"), now=Date.now(), day=86400000;
+    const folder=(path,name=path.split('/').at(-1))=>({path,name,parent:path.split('/').slice(0,-1).join('/'),depth:path.split('/').length});
+    const file=(path,age=0)=>({path,name:path.split('/').at(-1),parent:path.split('/').slice(0,-1).join('/'),lastModified:now-age*day});
+    const snapshot={folders:[{path:'',parent:null,name:'Root',depth:0},folder('alpha only'),folder('alpha only/one'),folder('alpha only/one/two'),folder('alpha only/one/two/three'),folder('alpha only/one/two/three/four'),folder('alpha only/old'),folder('alpha both'),folder('alpha both/bridge'),folder('alpha empty'),folder('alpha solo'),folder('alpha solo/deep')],
+      files:[file('alpha only/one/two/three/four/report.pdf'),file('alpha only/one/two/three/four/alpha.txt'),file('alpha only/old/old.pdf',8),file('alpha both/bridge/alpha.pdf'),file('alpha both/bridge/other.pdf'),file('alpha empty/old.pdf',8),file('alpha solo/deep/unrelated.md')]};
+    let reads=0;
+    const x=await app([a],{snapshot,ui:{query:'alpha'},fileAt:async()=>{reads++;return Object.assign(new Blob(['preview']),{name:'report.pdf'});}});
+    await until(()=>a.state.scans===1);
+    const article=name=>x.$('results').children.find(e=>e.children[0].textContent.includes(name));
+    // Without filters, the matching TXT makes the first folder selective too.
+    assert.equal(cls(article('alpha only'),'detail')[0].hidden,false);
+    assert.doesNotMatch(article('alpha both').textContent,/other.pdf/);
+    assert.equal(cls(article('alpha solo'),'detail')[0].hidden,true);
+    cls(article('alpha solo'),'folder-toggle')[0].onclick();
+    assert.match(article('alpha solo').textContent,/unrelated.md/);
+    x.$('format').value='pdf';x.$('format').onchange();
+    x.$('modified').value='7';x.$('modified').onchange();
+    await until(()=>x.$('result-count').textContent==='3 / 3');
+    assert.equal(article('alpha empty'),undefined);
+    const only=article('alpha only'), both=article('alpha both');
+    assert.equal(cls(only,'detail')[0].hidden,true);
+    assert.equal(cls(both,'detail')[0].hidden,false);
+    assert.match(both.textContent,/alpha.pdf/);assert.doesNotMatch(both.textContent,/other.pdf/);
+    cls(only,'folder-toggle')[0].onclick();
+    assert.doesNotMatch(only.textContent,/old|alpha.txt/);
+    for(const t of cls(only,'subfolder-toggle')) if(t.attrs['aria-expanded']==='false') t.onclick();
+    assert.match(only.textContent,/report.pdf/);
+    assert.equal(reads,0);
+    cls(only,'item').find(e=>e.textContent==='report.pdf').onclick();
+    await until(()=>reads===1 && !x.$('preview-panel').hidden);
+    x.$('preview-close').onclick();assert.equal(x.$('preview-panel').hidden,true);
+    await x.submit('alpha');assert.equal(cls(article('alpha only'),'detail')[0].hidden,false);
+  });
+  for (const total of [100,101,250,1205]) await test(`folder result pagination: ${total}`,async()=>{
+    const a=fixture('Root'), snapshot={folders:[{path:'',parent:null,name:'Root',depth:0}],files:[]};
+    for(let i=total-1;i>=0;i--){const name='hit'+String(i).padStart(4,'0');snapshot.folders.push({name,path:name,parent:'',depth:1});snapshot.files.push({name:'other.txt',path:name+'/other.txt',parent:name,lastModified:Date.now()});}
+    const x=await app([a],{snapshot,ui:{query:'hit'}});
+    await until(()=>x.$('result-count').textContent===`${Math.min(100,total)} / ${total}`);
+    assert.equal(x.$('results').children.length,Math.min(100,total));
+    assert.equal(x.$('result-more').hidden,total<=100);
+    const oldNext=x.$('result-more').onclick;
+    let shown=Math.min(100,total);
+    while(shown<total){await x.$('result-more').onclick();shown=Math.min(shown+100,total);assert.equal(x.$('result-count').textContent,`${shown} / ${total}`);assert.equal(x.$('results').children.length,shown);}
+    assert.equal(x.$('result-more').hidden,true);
+    const labels=cls(x.$('results'),'folder-toggle').map(e=>e.textContent.replace('▸ ','').replace('▾ ',''));
+    assert.equal(new Set(labels).size,total);
+    assert.deepEqual(labels,Array.from({length:total},(_,i)=>'hit'+String(i).padStart(4,'0')));
+    await x.submit('hit000');await until(()=>x.$('result-count').textContent==='10 / 10');
+    await oldNext();assert.equal(x.$('results').children.length,10);
+    assert.equal(x.$('result-more').hidden,true);
+  });
+  await test('paging locks concurrent requests, resets on filter/root and rejects revoked access',async()=>{
+    const a=fixture('A'),b=fixture('B'),snapshot={folders:[{path:'',parent:null,name:'A',depth:0}],files:[]};
+    for(let i=0;i<250;i++){const name='hit'+String(i).padStart(4,'0');snapshot.folders.push({name,path:name,parent:'',depth:1});snapshot.files.push({name:'other.pdf',path:name+'/other.pdf',parent:name,lastModified:Date.now()});}
+    const x=await app([a,b],{snapshot,ui:{query:'hit'}});await until(()=>x.$('result-count').textContent==='100 / 250');
+    a.state.permissionGate=deferred();const first=x.$('result-more').onclick(),second=x.$('result-more').onclick();
+    assert.equal(x.$('result-more').disabled,true);await second;assert.equal(x.$('results').children.length,100);
+    a.state.permissionGate.resolve();await first;assert.equal(x.$('result-count').textContent,'200 / 250');a.state.permissionGate=null;
+    x.$('format').value='pdf';x.$('format').onchange();await until(()=>x.$('result-count').textContent==='100 / 250');
+    const stale=x.$('result-more').onclick;
+    await x.switch('B');await until(()=>x.$('result-count').textContent==='0 / 0');
+    await stale();assert.equal(x.$('results').children.length,0);assert.equal(x.$('result-more').hidden,true);
+    await x.switch('A');await until(()=>x.$('result-count').textContent==='100 / 250');
+    a.state.permission='denied';await x.$('result-more').onclick();
+    assert.equal(x.$('results').children.length,0);assert.equal(x.$('result-controls').hidden,true);
+    assert.match(x.$('meta').textContent,/Read access/);
+  });
+  await test('large file-match results expand within the shared child budget without body reads',async()=>{
+    const a=fixture('Root'),snapshot={folders:[{name:'Root',path:'',parent:null,depth:0}],files:[]};
+    for(let i=0;i<1205;i++){const name='folder'+String(i).padStart(4,'0');snapshot.folders.push({name,path:name,parent:'',depth:1});snapshot.files.push({name:'needle.txt',path:name+'/needle.txt',parent:name});}
+    let reads=0;const x=await app([a],{snapshot,ui:{query:'needle'},fileAt:async()=>{reads++;throw Error('unexpected read');}});
+    await until(()=>x.$('result-count').textContent==='100 / 1205');
+    assert.equal(x.$('results').children.length,100);assert.equal(cls(x.$('results'),'item').length,100);
+    await x.$('result-more').onclick();await x.$('result-more').onclick();
+    assert.equal(x.$('result-count').textContent,'300 / 1205');assert.equal(cls(x.$('results'),'item').length,300);assert.equal(reads,0);
   });
   console.log(`${count} app integration tests passed (simulated DOM/handles/storage)`);
 })().catch(e=>{console.error(e);process.exitCode=1;});

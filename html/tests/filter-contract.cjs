@@ -10,7 +10,7 @@ module.exports = async function filterContract(S) {
     const snapshot = {...base,files:[file('boundary.PDF','deep/nested',now-days*day),file('old.pdf','',now-days*day-1),file('future.pdf','',now+1),file('unknown.pdf','',undefined)]};
     delete snapshot.files[3].lastModified;
     const options = {days:String(days),format:'all',now};
-    assert.deepEqual((await S.search(snapshot,'',100,()=>false,options)).map(r=>r.path),['deep/nested']);
+    assert.deepEqual((await S.search(snapshot,'',()=>false,options)).map(r=>r.path),['deep/nested']);
     assert.deepEqual([...(await S.visibility(snapshot,'',options)).visible].sort(),['','deep','deep/nested','deep/nested/boundary.PDF']);
     assert.equal(S.eligible(snapshot.files[1],options),false);
     assert.equal(S.eligible(snapshot.files[2],options),false);
@@ -24,18 +24,18 @@ module.exports = async function filterContract(S) {
   const snapshot = {...base,files:allFiles};
   for (const [format, extensions] of Object.entries(formats)) {
     const options = {days:'7',format,now};
-    const result = await S.search(snapshot,'"alpha beta" -draft',100,()=>false,options);
+    const result = await S.search(snapshot,'"alpha beta" -draft',()=>false,options);
     assert.equal(result.length,1); assert.equal(result[0].fileMatchCount,extensions.length);
     assert.deepEqual([... (await S.visibility(snapshot,'alpha beta',options)).files].sort(),extensions.map(ext=>'deep/nested/alpha beta.'+ext.toUpperCase()).sort());
-    assert.equal((await S.search(snapshot,'',100,()=>false,options)).length,1);
-    assert.equal((await S.search(snapshot,'no-match',100,()=>false,options)).length,0);
+    assert.equal((await S.search(snapshot,'',()=>false,options)).length,1);
+    assert.equal((await S.search(snapshot,'no-match',()=>false,options)).length,0);
   }
   assert.equal((await S.visibility(snapshot,'-draft',{now,format:'all',days:'all'})).files.size,allFiles.length-1);
   assert.equal((await S.visibility(snapshot,'alpha OR other -draft',{now,format:'pdf'})).files.size,1);
-  assert.equal((await S.search(snapshot,'',100,()=>false,{days:'all',format:'all'})).length,0);
+  assert.equal((await S.search(snapshot,'',()=>false,{days:'all',format:'all'})).length,0);
   const many={folders:[folder('','Root')],files:[]};
   for(let i=0;i<230;i++) {const path='f'+String(i).padStart(3,'0');many.folders.push(folder(path));many.files.push(file('alpha.'+(i<120?'txt':'pdf'),path));}
-  const rows=await S.search(many,'alpha',100,()=>false,{format:'pdf',days:'all',now});
-  assert.equal(rows.length,100); assert.equal(rows[0].path,'f120');assert.equal(rows.at(-1).path,'f219');
-  assert.deepEqual(await S.search(many,'alpha',100,()=>true,{format:'pdf',now}),[]);
+  const rows=await S.search(many,'alpha',()=>false,{format:'pdf',days:'all',now});
+  assert.equal(rows.length,110); assert.equal(rows[0].path,'f120');assert.equal(rows.at(-1).path,'f229');
+  assert.deepEqual(await S.search(many,'alpha',()=>true,{format:'pdf',now}),[]);
 };

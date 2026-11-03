@@ -20,6 +20,12 @@
   const model = new C.Model(new C.Storage());
   const states = new Map(), childIndexes = new WeakMap();
   let searchGeneration = 0, previewGeneration = 0, objectURL, pickerTask, composing = false, timer, captureExpansion;
+  let nextResults;
+  function resetPaging() {
+    nextResults = null; $("result-controls").hidden = true; $("result-more").hidden = true;
+    $("result-count").textContent = "";
+  }
+  $("result-more").addEventListener("click", () => nextResults?.());
   const node = (tag, text, cls) => {
     const item = document.createElement(tag);
     if (text !== undefined) item.textContent = text;
@@ -27,7 +33,7 @@
     return item;
   };
   const state = () => {
-    if (!states.has(model.activeId)) states.set(model.activeId, {query: null, collapsed: new Set(), selected: null});
+    if (!states.has(model.activeId)) states.set(model.activeId, {query: null, collapsed: new Set(), expanded: new Set(), selected: null});
     return states.get(model.activeId);
   };
   function notice(message = "") { $("notice").textContent = message; $("notice").hidden = !message; }
@@ -46,7 +52,7 @@
     // a render even if its event has not run (or input invalidated its ticket).
     captureExpansion?.(); captureExpansion = null;
   }
-  function clearView() { rememberExpansion(); searchGeneration++; clearTimeout(timer); clearPreview(); $("results").replaceChildren(); }
+  function clearView() { rememberExpansion(); searchGeneration++; clearTimeout(timer); clearPreview(); $("results").replaceChildren(); resetPaging(); }
   function view(settings) {
     $("settings-view").hidden = !settings; $("search-view").hidden = settings;
     if (settings) renderSettings(); else { renderRoots(); runSearch(); $("query").focus(); }
@@ -168,24 +174,16 @@
     const display = await S.visibility(session.snapshot, queryText, options, () => !current());
     if (!current()) throw new DOMException("Outdated display", "AbortError");
     if (!childIndexes.has(session)) {
-      const index = new Map();
-      let processed = 0;
-      for (const kind of ["folders", "files"]) for (const item of session.snapshot[kind]) {
-        if (!index.has(item.parent)) index.set(item.parent, {folders: [], files: []});
-        index.get(item.parent)[kind].push(item);
-        if (++processed % 500 === 0) { await S.pause(); if (!current()) throw new DOMException("Outdated display", "AbortError"); }
-      }
+      const index = await S.childIndex(session.snapshot, () => !current());
+      if (!index || !current()) throw new DOMException("Outdated display", "AbortError");
       childIndexes.set(session, index);
     }
-    const index = childIndexes.get(session), cache = new Map();
-    return {visibleFiles: display.files, childrenOf: path => {
-      if (!cache.has(path)) cache.set(path, S.children(index.get(path) || {folders: [], files: []}, path)
-        .filter(item => display.visible.has(item.path)));
-      return cache.get(path);
-    }};
+    const lists = await S.displayIndex(childIndexes.get(session), display, () => !current());
+    if (!lists || !current()) throw new DOMException("Outdated display", "AbortError");
+    return {display, childrenOf: (path, showAll) => (showAll ? lists.all : lists.matched).get(path) || []};
   }
   function resultRenderer(session, query, ui, current, display) {
-    const terms = S.terms(S.parse(query)), {childrenOf, visibleFiles} = display;
+    const terms = S.terms(S.parse(query)), {childrenOf} = display;
     const jobs = [], observers = [];
     captureExpansion = () => { for (const remember of observers) remember(); };
     let remaining = 400, draining = false;
@@ -202,20 +200,20 @@
         }
       } finally { draining = false; }
     }
-    function childList(path, level) {
-      const list = node("ul", undefined, "children"), children = childrenOf(path);
+    function childList(path, level, showAll) {
+      const list = node("ul", undefined, "children"), children = childrenOf(path, showAll);
       let offset = 0;
       function more(autoLevel) {
         if (!current()) return;
         const end = Math.min(children.length, offset + 200);
         while (offset < end && remaining > 0) {
           const child = children[offset++], li = node("li"); remaining--;
-          if (child.kind === "directory") li.append(folder(child, autoLevel + 1));
+          if (child.kind === "directory") li.append(folder(child, autoLevel + 1, showAll));
           else {
             const button = node("button", undefined, "file"); button.type = "button";
             button.append(highlight(child.name, terms));
             button.setAttribute("aria-pressed", String(ui.selected === child.path));
-            button.addEventListener("click", () => showPreview(child.path, button)); li.append(button);
+            button.addEventListener("click", () => { if (current()) return showPreview(child.path, button); }); li.append(button);
           }
           list.append(li);
         }
@@ -234,22 +232,22 @@
       else more(level);
       return list;
     }
-    function folder(row, level = 0) {
+    function folder(row, level = 0, showAll = row.showAll) {
       const details = node("details", undefined, "folder"), summary = node("summary");
       summary.append(highlight(row.name, terms)); details.append(summary);
       let populated = false;
       const populate = () => {
         if (populated || !details.open || !current()) return;
         populated = true;
-        details.append(childList(row.path, level));
+        details.append(childList(row.path, level, showAll));
       };
-      details.open = !ui.collapsed.has(row.path);
+      details.open = ui.expanded.has(row.path) || (!ui.collapsed.has(row.path) && (level > 0 || !showAll));
       let lastOpen = details.open;
       const remember = () => {
         if (details.open === lastOpen) return;
         lastOpen = details.open;
-        if (details.open) ui.collapsed.delete(row.path);
-        else ui.collapsed.add(row.path);
+        if (details.open) { ui.collapsed.delete(row.path); ui.expanded.add(row.path); }
+        else { ui.expanded.delete(row.path); ui.collapsed.add(row.path); }
       };
       observers.push(remember);
       if (details.open) jobs.push(populate);
@@ -262,7 +260,7 @@
       });
       return details;
     }
-    return {folder: row => folder(row), drain, visibleFiles};
+    return {folder: row => folder(row), drain};
   }
   async function runSearch() {
     rememberExpansion();
@@ -272,8 +270,9 @@
     const options = {days: $("modified").value, format: $("format").value, now: Date.now()};
     const context = JSON.stringify([query, options.days, options.format]);
     const ui = state();
-    if (ui.query !== context) { ui.query = context; ui.collapsed.clear(); clearPreview(); }
+    if (ui.query !== context) { ui.query = context; ui.collapsed.clear(); ui.expanded.clear(); clearPreview(); }
     $("results").replaceChildren();
+    resetPaging();
     if (!session) {
       clearPreview(); $("meta").textContent = model.pendingId ? "フォルダの選択内容を確認しています…" :
         (model.roots.size ? "検索するには対象フォルダを再選択してください。" : "Settings → Add Directory から検索対象を登録してください。");
@@ -282,18 +281,30 @@
     if (!query.trim() && !S.filtered(options)) { clearPreview(); $("meta").textContent = "キーワードを入力してください。"; return; }
     const current = () => ticket === searchGeneration && id === model.activeId && session === model.sessions.get(id);
     try {
-      const rows = await S.search(session.snapshot, query, 100, () => !current(), options);
+      const rows = await S.search(session.snapshot, query, () => !current(), options);
       if (!current()) return;
+      if (!rows.length) {
+        clearPreview(); $("meta").textContent = "一致するフォルダはありません。";
+        $("result-controls").hidden = false; $("result-count").textContent = "0 / 0";
+        return;
+      }
       const display = await displayChildren(session, rows, query, current, options);
       if (!current()) return;
       const renderer = resultRenderer(session, query, ui, current, display);
       // Keep file selection while typing; remove previews outside results.
-      if (!renderer.visibleFiles.has(ui.selected)) clearPreview();
-      const fragment = document.createDocumentFragment();
-      for (const row of rows) fragment.append(renderer.folder(row));
-      $("results").replaceChildren(fragment);
-      $("meta").textContent = rows.length ? "" : "一致するフォルダはありません。";
-      await renderer.drain();
+      if (!S.containsFile(rows, display.display, ui.selected)) clearPreview();
+      let cursor = 0;
+      nextResults = () => {
+        if (!current()) return;
+        const fragment = document.createDocumentFragment(), end = Math.min(cursor + 100, rows.length);
+        while (cursor < end) fragment.append(renderer.folder(rows[cursor++]));
+        $("results").append(fragment);
+        $("result-count").textContent = `${cursor} / ${rows.length}`;
+        $("result-controls").hidden = false; $("result-more").hidden = cursor >= rows.length;
+        return renderer.drain();
+      };
+      $("meta").textContent = "";
+      await nextResults();
     } catch (error) { if (current()) { clearView(); fail(error); } }
   }
   function renderSettings() {
@@ -322,13 +333,13 @@
   }
   $("preview-close").addEventListener("click", () => { clearPreview(); state().selected = null;
     document.querySelectorAll(".file[aria-pressed=true]").forEach(e => e.setAttribute("aria-pressed", "false")); });
-  for (const id of ["modified", "format"]) $(id).addEventListener("change", () => { clearPreview(); searchGeneration++; if (!composing) runSearch(); });
+  for (const id of ["modified", "format"]) $(id).addEventListener("change", () => { clearPreview(); searchGeneration++; resetPaging(); if (!composing) runSearch(); });
   $("root").addEventListener("change", () => choose($("root").value));
-  $("query").addEventListener("compositionstart", () => { composing = true; clearTimeout(timer); searchGeneration++; clearPreview(); });
+  $("query").addEventListener("compositionstart", () => { composing = true; clearTimeout(timer); searchGeneration++; resetPaging(); clearPreview(); });
   $("query").addEventListener("compositionend", () => { composing = false; runSearch(); });
   $("query").addEventListener("input", event => {
     if (composing || event.isComposing) return;
-    searchGeneration++; clearPreview(); clearTimeout(timer); timer = setTimeout(runSearch, 120);
+    searchGeneration++; resetPaging(); clearPreview(); clearTimeout(timer); timer = setTimeout(runSearch, 120);
   });
   $("search-form").addEventListener("submit", event => { event.preventDefault(); if (!composing) runSearch(); });
   $("settings-button").addEventListener("click", () => view(true));
