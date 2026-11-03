@@ -272,6 +272,24 @@ test('preview close invalidates slow reads; same conditions and theme keep an op
  const pending=h.buttons()[0].click();await h.ids['preview-close'].click();gate.resolve();await pending;
  assert.equal(h.ids.preview.children.length,0);assert.equal(h.ids['preview-panel'].hidden,true);
 });
+for(const change of ['close','keyword','modified','format','root']) test(`preview selection clears on ${change}, including late text reads and redraws`,async()=>{
+ const h=await harness(),f=file('A/alpha.txt');f.lastModified=Date.now();
+ await h.pick([f]);await h.pick([file('B/alpha.txt')]);h.ids.root.value='1';await h.ids.root.emit('change');await h.query('alpha');
+ const gate=deferred(),slice=f.slice;let reads=0;
+ f.slice=(...args)=>({arrayBuffer:async()=>{if(++reads===2)await gate.promise;return slice(...args).arrayBuffer();}});
+ const pending=h.buttons()[0].click();await waitFor(()=>reads===2);
+ await h.query('alpha');await h.ids['theme-toggle'].click();
+ assert.equal(h.ids['preview-panel'].hidden,false);assert(h.buttons().some(b=>b.getAttribute('aria-pressed')==='true'));
+ const rendered=h.buttons();
+ if(change==='close')await h.ids['preview-close'].click();
+ if(change==='keyword'){h.ids.query.value='alpha OR absent';await h.ids.query.emit('input');}
+ if(change==='modified'||change==='format'){h.ids[change].value=change==='modified'?'7':'txt';await h.ids[change].emit('change');}
+ if(change==='root'){h.ids.root.value='2';await h.ids.root.emit('change');}
+ assert.equal(h.ids['preview-panel'].hidden,true);assert(rendered.every(b=>b.getAttribute('aria-pressed')==='false'));
+ gate.resolve();await pending;assert.equal(h.ids.preview.children.length,0);
+ await h.query(change==='keyword'?'alpha OR absent':'alpha');assert(h.buttons().every(b=>b.getAttribute('aria-pressed')==='false'));
+ if(change==='root'){h.ids.root.value='1';await h.ids.root.emit('change');await h.tick();assert(h.buttons().every(b=>b.getAttribute('aria-pressed')==='false'));}
+});
 test('filter-only changes rerun cached search, prune files and close preview',async()=>{
  const h=await harness(),now=Date.now(), pdf=file('A/deep/alpha.PDF'), old=file('A/deep/old.pdf'),txt=file('A/deep/alpha.txt');
  pdf.lastModified=txt.lastModified=now;old.lastModified=now-181*86400000;
@@ -338,6 +356,20 @@ test('paging resets on filters and root switch, and stale queued pages never app
  assert.equal(h.ids.results.children.length,0);assert.equal(h.ids['result-more'].hidden,true);
  h.ids.format.value='all';await h.ids.format.emit('change');await waitFor(()=>h.ids['result-count'].textContent==='1 / 1');
  assert.equal(h.ids.results.children.length,1);assert.equal(h.ids.results.children[0].children[0].textContent,'B');
+});
+test('appended folders preserve existing nodes, expansion and preview selection',async()=>{
+ const h=await harness();await h.pick(Array.from({length:250},(_,i)=>file('Root/hit'+String(i).padStart(4,'0')+'/other.txt')));
+ await h.query('hit');await waitFor(()=>h.ids['result-count'].textContent==='100 / 250');
+ const first=h.ids.results.children[0];await toggle(first,true);await settle(h);await h.buttons()[0].click();
+ await Promise.all([h.ids['result-more'].click(),h.ids['result-more'].click()]);await settle(h);
+ assert.equal(h.ids['result-count'].textContent,'250 / 250');assert.equal(h.ids.results.children[0],first);assert.equal(first.open,true);
+ assert.equal(h.buttons()[0].getAttribute('aria-pressed'),'true');
+ const last=h.ids.results.children[249];await toggle(last,true);await settle(h);
+ await h.buttons().at(-1).click();assert.equal(h.buttons()[0].getAttribute('aria-pressed'),'false');
+ await h.ids['preview-close'].click();assert.equal(h.buttons().at(-1).getAttribute('aria-pressed'),'false');
+ await h.query('hit');await waitFor(()=>h.ids['result-count'].textContent==='100 / 250');assert.equal(h.ids.results.children[0].open,true);
+ await h.ids['result-more'].click();await h.ids['result-more'].click();await settle(h);
+ assert.equal(h.ids.results.children[249].open,true);assert(h.buttons().every(b=>b.getAttribute('aria-pressed')==='false'));
 });
 test('large file-match results expand within the shared child budget without body reads',async()=>{
  const h=await harness();let reads=0;
