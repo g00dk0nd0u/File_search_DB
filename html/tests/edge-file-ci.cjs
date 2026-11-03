@@ -445,11 +445,11 @@ async function compactUI() {
     assert.equal(await page.locator("#search-view .theme").count(),0);
     assert.doesNotMatch(await page.locator("#results").innerText(),/旅行写真/);
     assert.equal(await page.locator("#meta").innerText(),"");
-    assert.equal(await page.locator("#preview-panel").isVisible(), false);
+    assert.equal(await page.locator("#preview-panel").isVisible(), true);
     const fullWidth = await page.locator("#results").evaluate(n=>n.getBoundingClientRect().width);
     assert.equal(await page.locator("#modified option").count(),6);
     assert.equal(await page.locator("#format option").count(),12);
-    await evidence(page,"search-fullwidth-preview-closed");
+    await evidence(page,"search-empty-preview-open");
     const first=page.getByRole("button",{name:"健康保険証.txt",exact:true});
     await first.focus();
     await first.press("Enter");
@@ -462,10 +462,11 @@ async function compactUI() {
     });
     assert(layout.panel.x<layout.results.x);
     assert(Math.abs(layout.panel.width/layout.results.width-2)<0.03);
-    assert(layout.panel.height>=270);
+    assert(layout.panel.height>=240);
+    assert(layout.panel.bottom<=900);
     assert(layout.font>=13.5 && layout.font<=14);
     assert(layout.pad>=3 && layout.pad<=4);
-    assert(fullWidth > layout.results.width * 2);
+    assert(Math.abs(fullWidth-layout.results.width)<2);
     await page.locator("#preview-close").click();
     assert.equal(await page.locator("#preview-panel").isVisible(), false);
     assert.equal(await page.locator('.item[aria-pressed="true"], .item.selected').count(),0);
@@ -487,7 +488,7 @@ async function compactUI() {
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
     await evidence(page,"compact-mobile");
     await page.locator("#format").selectOption("txt");
-    assert.equal(await page.locator("#preview-panel").isVisible(),false);
+    assert.equal(await page.locator("#preview-panel").isVisible(),true);
     assert.equal(await page.locator('.item[aria-pressed="true"], .item.selected').count(),0);
     await page.locator("#query").fill("");
     await page.locator("#search").click();
@@ -576,6 +577,62 @@ async function closeEdge() {
   );
   report.observations.push({ closedEdgeProcessIds: ids });
 }
+// Both application styles/layouts in installed Edge; Safari engine acceptance is separate.
+async function previewMatrix() {
+  for (const edition of ["html", "safari"]) {
+    const matrixPage = await context.newPage();
+    await check(`${edition}: responsive preview viewport matrix`, "real Edge layout; synthetic preview bodies", async () => {
+      await matrixPage.goto(fileURL(`${edition}/index.html`));
+      await matrixPage.locator("#preview-panel").waitFor();
+      assert.equal(await matrixPage.locator("#preview").innerText(), "");
+      assert.equal(await matrixPage.locator("#preview").evaluate(n=>getComputedStyle(n,"::before").content), '"ファイルを選択してください"');
+      for (const [width,height] of [[1280,720],[1366,768],[1280,900],[480,800]]) {
+        for (const scale of [1,1.25,1.5]) {
+          // Browser zoom reduces the CSS viewport. This tests that geometry,
+          // without claiming OS/native browser zoom input was exercised.
+          await matrixPage.setViewportSize({width:Math.floor(width/scale),height:Math.floor(height/scale)});
+          await matrixPage.evaluate(()=>scrollTo(0,0));
+          for (const kind of ["empty","pdf","image","text"]) {
+            await matrixPage.evaluate(kind=>{
+              const pane=document.getElementById("preview"); pane.replaceChildren();
+              if(kind==="empty")return;
+              const body=document.createElement({pdf:"iframe",image:"img",text:"pre"}[kind]);
+              if(kind==="text")body.textContent="長いテキスト\n".repeat(2000);
+              if(kind==="pdf"){body.title="Layout PDF";body.src="about:blank";}
+              if(kind==="image")body.src="data:image/svg+xml,"+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="3000"><rect width="2000" height="3000" fill="teal"/></svg>');
+              pane.append(body);
+            },kind);
+            await matrixPage.waitForFunction(()=>{
+              const panel=document.getElementById("preview-panel"),r=panel.getBoundingClientRect();
+              return Math.abs(r.height-Math.max(240,Math.floor(innerHeight-Math.max(16,r.top)-12)))<2;
+            });
+            const geometry=await matrixPage.evaluate(()=>{
+              const panel=document.getElementById("preview-panel").getBoundingClientRect(),content=document.getElementById("preview").getBoundingClientRect(),results=document.getElementById("results").getBoundingClientRect();
+              return {panel:panel.toJSON(),content:content.toJSON(),results:results.toJSON(),height:innerHeight,width:innerWidth,overflow:document.documentElement.scrollWidth>innerWidth};
+            });
+            assert(!geometry.overflow);
+            if(geometry.height-geometry.panel.top>=252)assert(geometry.panel.bottom<=geometry.height);
+            assert(geometry.content.bottom<=geometry.panel.bottom);
+            if(geometry.width>800)assert(Math.abs(geometry.panel.width/geometry.results.width-2)<0.04);
+            else assert(geometry.results.top>=geometry.panel.bottom);
+            if(kind==="text")assert(await matrixPage.locator("#preview").evaluate(n=>n.scrollHeight>n.clientHeight));
+          }
+          if(scale===1)await evidence(matrixPage,`${edition}-preview-${width}x${height}`);
+        }
+      }
+      await matrixPage.setViewportSize({width:1280,height:260});
+      await matrixPage.waitForFunction(()=>document.getElementById("preview-panel").getBoundingClientRect().height>=240);
+      await matrixPage.locator("#preview-close").click();
+      assert.equal(await matrixPage.locator("#preview-panel").isVisible(),false);
+      await matrixPage.locator("#format").selectOption("txt");
+      assert.equal(await matrixPage.locator("#preview-panel").isVisible(),false);
+      await matrixPage.reload();
+      await matrixPage.locator("#preview-panel").waitFor();
+    },matrixPage);
+    await matrixPage.close();
+  }
+}
+
 async function main() {
   assert.equal(
     process.platform,
@@ -666,6 +723,7 @@ async function main() {
       );
       await page.close();
     }
+    if (!restart) await previewMatrix();
     if (
       !(await check(
         `${restart ? "second" : "first"}: all owned Edge processes exited`,

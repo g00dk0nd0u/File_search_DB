@@ -310,7 +310,7 @@ td input {
 .subfolder-items[hidden] { display: none; }
 .more-items { margin: 8px 0; }
 
-/* Preview is opened only by a file selection. */
+/* Closing is explicit; clearing a selection preserves panel visibility. */
 .workspace { grid-template-columns: minmax(0, 1fr); }
 .workspace.preview-open { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
 #preview-panel { position: sticky; top: 16px; min-width: 0; }
@@ -321,3 +321,24 @@ td input {
   #preview-panel { position: static; }
   #search-form .query-group { order: 0; }
 }
+
+/* Reserve the actual remaining viewport height; tiny viewports can page-scroll. */
+#preview-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: var(--preview-height, 50vh);
+  min-height: 240px;
+  max-height: none;
+  overflow: hidden;
+}
+#preview-panel[hidden] { display: none; }
+#preview-title { grid-column: 1; grid-row: 1; min-width: 0; margin: 0 0 10px; overflow-wrap: anywhere; max-height: 4.5em; overflow: auto; }
+.preview-close { grid-column: 2; grid-row: 1; float: none; align-self: start; }
+#preview { grid-column: 1 / -1; min-height: 0; min-width: 0; overflow: auto; display: flex; flex-direction: column; }
+#preview:empty::before { content: "ファイルを選択してください"; color: var(--muted); }
+#preview > * { flex-shrink: 0; }
+#preview iframe { flex: 1 0 120px; height: auto; min-height: 120px; width: 100%; }
+#preview img { max-height: 100%; max-width: 100%; object-fit: contain; }
+#preview pre { max-height: none; overflow: visible; margin: 0; }
+@supports (height: 100dvh) { #preview-panel { height: var(--preview-height, 50dvh); } }

@@ -44,7 +44,6 @@
     previewGeneration++;
     state().selected = null;
     document.querySelectorAll(".file[aria-pressed=true]").forEach(e => e.setAttribute("aria-pressed", "false"));
-    $("preview-panel").hidden = true; $("workspace").className = "workspace";
     $("preview").replaceChildren(); $("preview-title").textContent = "Preview";
     if (objectURL) URL.revokeObjectURL(objectURL);
     objectURL = null;
@@ -107,7 +106,8 @@
     const session = model.sessions.get(model.activeId), id = model.activeId, ticket = previewGeneration;
     const file = session?.handles.get(path);
     if (!file) return;
-    $("preview-panel").hidden = false; $("workspace").className = "workspace preview-open";
+    setPreviewOpen(true);
+    $("preview").replaceChildren();
     state().selected = path;
     document.querySelectorAll(".file[aria-pressed=true]").forEach(e => e.setAttribute("aria-pressed", "false"));
     button?.setAttribute("aria-pressed", "true");
@@ -333,7 +333,7 @@
       cell.append(actions); tr.append(cell); $("roots").append(tr);
     }
   }
-  $("preview-close").addEventListener("click", clearPreview);
+  $("preview-close").addEventListener("click", () => { clearPreview(); setPreviewOpen(false); });
   for (const id of ["modified", "format"]) $(id).addEventListener("change", () => { clearPreview(); searchGeneration++; resetPaging(); if (!composing) runSearch(); });
   $("root").addEventListener("change", () => choose($("root").value));
   $("query").addEventListener("compositionstart", () => { composing = true; clearTimeout(timer); searchGeneration++; resetPaging(); clearPreview(); });
@@ -350,6 +350,36 @@
     model.cancel(); model.sessions.clear(); pickerTask = null; $("picker").value = ""; clearView();
   });
   window.addEventListener("pageshow", event => { if (event.persisted) { renderRoots(); renderSettings(); runSearch(); } });
+
+  function resizePreview() {
+    const panel = $("preview-panel");
+    if (panel.hidden || !panel.getBoundingClientRect) return;
+    const viewport = window.visualViewport;
+    const bottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+    const available = Math.floor(bottom - Math.max(16, panel.getBoundingClientRect().top) - 12);
+    const height = `${Math.max(240, available)}px`;
+    if (panel.style.getPropertyValue("--preview-height") !== height)
+      panel.style.setProperty("--preview-height", height);
+  }
+  function setPreviewOpen(open) {
+    $("preview-panel").hidden = !open;
+    $("workspace").className = open ? "workspace preview-open" : "workspace";
+    resizePreview();
+  }
+  window.addEventListener("resize", resizePreview);
+  window.addEventListener("scroll", resizePreview, {passive: true});
+  window.visualViewport?.addEventListener("resize", resizePreview);
+  window.visualViewport?.addEventListener("scroll", resizePreview);
+  if (window.ResizeObserver) {
+    let resizeFrame;
+    const observer = new window.ResizeObserver(() => {
+      window.cancelAnimationFrame(resizeFrame);
+      resizeFrame = window.requestAnimationFrame(resizePreview);
+    });
+    observer.observe(document.querySelector("main"));
+    observer.observe($("preview-title"));
+  }
+  setPreviewOpen(true);
   try { await model.load(); }
   catch (error) { fail(error); }
   $("add").disabled = false; $("settings-button").disabled = false;

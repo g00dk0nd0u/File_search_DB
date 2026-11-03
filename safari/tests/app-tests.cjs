@@ -58,7 +58,7 @@ test('UI search, expand, Japanese preview; state survives repeated search',async
  assert.equal(h.ids.preview.children[0].textContent,'日本語');
  assert.equal(h.ids.results.children[0].children.some(e=>e.tagName==='p'),false);
  await h.query('alpha beta');assert.equal(h.ids.results.children[0].open,true);
- assert.equal(h.ids['preview-panel'].hidden,true);
+ assert.equal(h.ids['preview-panel'].hidden,false);
 });
 test('UI root switch isolates sessions and clears old preview',async()=>{
  const h=await harness();await h.pick([file('Same/one.txt')]);await h.pick([file('Same/two.txt')]);await h.query('two');
@@ -263,7 +263,7 @@ test('large subtree filtering yields and cannot append after query/root change',
 });
 test('preview close invalidates slow reads; same conditions and theme keep an open preview',async()=>{
  const h=await harness(), f=file('A/alpha.txt');await h.pick([f]);await h.query('alpha');
- assert.equal(h.ids['preview-panel'].hidden,true);
+ assert.equal(h.ids['preview-panel'].hidden,false);
  await h.buttons()[0].click();assert.equal(h.ids['preview-panel'].hidden,false);
  await h.query('alpha');assert.equal(h.ids['preview-panel'].hidden,false);
  await h.ids['theme-toggle'].click();assert.equal(h.ids['preview-panel'].hidden,false);
@@ -285,7 +285,7 @@ for(const change of ['close','keyword','modified','format','root']) test(`previe
  if(change==='keyword'){h.ids.query.value='alpha OR absent';await h.ids.query.emit('input');}
  if(change==='modified'||change==='format'){h.ids[change].value=change==='modified'?'7':'txt';await h.ids[change].emit('change');}
  if(change==='root'){h.ids.root.value='2';await h.ids.root.emit('change');}
- assert.equal(h.ids['preview-panel'].hidden,true);assert(rendered.every(b=>b.getAttribute('aria-pressed')==='false'));
+ assert.equal(h.ids['preview-panel'].hidden,change==='close');assert(rendered.every(b=>b.getAttribute('aria-pressed')==='false'));
  gate.resolve();await pending;assert.equal(h.ids.preview.children.length,0);
  await h.query(change==='keyword'?'alpha OR absent':'alpha');assert(h.buttons().every(b=>b.getAttribute('aria-pressed')==='false'));
  if(change==='root'){h.ids.root.value='1';await h.ids.root.emit('change');await h.tick();assert(h.buttons().every(b=>b.getAttribute('aria-pressed')==='false'));}
@@ -297,7 +297,7 @@ test('filter-only changes rerun cached search, prune files and close preview',as
  h.ids.format.value='pdf';await h.ids.format.emit('change');await h.tick();
  assert.deepEqual([...new Set(h.buttons().map(b=>b.textContent))].sort(),['alpha.PDF','old.pdf']);
  await h.buttons()[0].click();h.ids.modified.value='7';await h.ids.modified.emit('change');await h.tick();
- assert.deepEqual([...new Set(h.buttons().map(b=>b.textContent))],['alpha.PDF']);assert.equal(h.ids['preview-panel'].hidden,true);
+ assert.deepEqual([...new Set(h.buttons().map(b=>b.textContent))],['alpha.PDF']);assert.equal(h.ids['preview-panel'].hidden,false);
  await h.query('alpha -draft');assert(h.buttons().every(b=>b.textContent==='alpha.PDF'));
 });
 
@@ -380,4 +380,14 @@ test('large file-match results expand within the shared child budget without bod
  await h.ids['result-more'].click();await h.ids['result-more'].click();
  await waitFor(()=>h.ids['result-count'].textContent==='300 / 1205'&&h.buttons().length===300);
  assert.equal(reads,0);
+});
+
+test('explicit close persists through conditions until selection or reload',async()=>{
+ const h=await harness();await h.pick([file('A/alpha.txt')]);await h.query('alpha');
+ assert.equal(h.ids['preview-panel'].hidden,false);
+ await h.ids['preview-close'].click();await h.query('absent');await h.query('alpha');
+ h.ids.format.value='txt';await h.ids.format.emit('change');await h.tick();
+ assert.equal(h.ids['preview-panel'].hidden,true);
+ await h.buttons()[0].click();assert.equal(h.ids['preview-panel'].hidden,false);
+ const fresh=await harness();assert.equal(fresh.ids['preview-panel'].hidden,false);
 });
