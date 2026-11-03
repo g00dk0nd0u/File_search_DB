@@ -9,13 +9,16 @@ const Search = require("../search.js");
 const FS = require("../filesystem.js");
 const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => {resolve=a; reject=b;}); return {promise,resolve,reject}; };
 class Element {
-  constructor(tag = "div", text = "") { this.isConnected = true; this.tag = tag; this.children = []; this.text = text; this.hidden = false; this.style = {}; this.value = ""; this.attrs = {}; this.className = ""; this.classList = { add: () => {}, remove: () => {} }; }
+  constructor(tag = "div", text = "") { this.isConnected = true; this.tag = tag; this.children = []; this.text = text; this.hidden = false; this.style = {}; this.value = ""; this.attrs = {}; this.className = ""; this.classList = {
+    add: name => { this.className = [...new Set([...this.className.split(" ").filter(Boolean), name])].join(" "); },
+    remove: name => { this.className = this.className.split(" ").filter(c => c !== name).join(" "); },
+  }; }
   set textContent(v) { this.text = v; this.children = []; }
   get textContent() { return this.text + this.children.map(c => c.textContent).join(""); }
   append(...items) { for (const item of items) { this.children = this.children.filter(c => c !== item); this.children.push(item); } }
   replaceChildren(...items) { this.text = ""; this.children = items; }
   setAttribute(k,v) { this.attrs[k] = v; }
-  querySelectorAll() { return []; }
+  querySelectorAll(selector) { return this.children.flatMap(c => [...(c.className.split(" ").includes(selector.slice(1)) ? [c] : []), ...c.querySelectorAll(selector)]); }
 }
 async function until(fn) {
   const deadline = Date.now() + 15000;
@@ -108,14 +111,15 @@ async function test(name,fn){await fn();console.log("PASS "+name);count++;}
     const a=fixture("A"),x=await app([a],{empty:true});await until(()=>a.state.scans===1);assert.equal(x.$("results").children.length,0);
     a.state.gate.resolve();await until(()=>x.$("results").children.length===1);assert.equal(x.state.commits,1);
   });
-  await test("automatic update preserves expanded folder and selected path",async()=>{
+  await test("automatic update preserves expansion without restoring an inactive stored selection",async()=>{
     const a=fixture("A");a.state.files=["old.txt","new.txt"];
     const x=await app([a],{ui:{expanded:[""],selected:{"":"old.txt"}}});await until(()=>a.state.scans===1);
     assert.equal(x.$("results").children[0].children[1].hidden,false);
     a.state.gate.resolve();await until(()=>x.state.commits===1&&x.$("results").textContent.includes("new"));
     assert.equal(x.$("results").children[0].children[1].hidden,false);
     assert.equal(x.$("preview-panel").hidden,true);
-    assert.equal(x.state.settings.selected[""],"old.txt");
+    assert.equal(Object.keys(x.state.settings.selected).length,0);
+    assert(x.$("results").querySelectorAll('.item').every(b=>b.attrs['aria-pressed']==='false'));
   });
   await test("Reselect recovers a denied child and permits an explicit retry",async()=>{
     const a=fixture("A"),x=await app([a]);await until(()=>a.state.scans===1);
@@ -381,6 +385,49 @@ async function test(name,fn){await fn();console.log("PASS "+name);count++;}
     assert.equal(x.$('results').children.length,100);assert.equal(cls(x.$('results'),'item').length,100);
     await x.$('result-more').onclick();await x.$('result-more').onclick();
     assert.equal(x.$('result-count').textContent,'300 / 1205');assert.equal(cls(x.$('results'),'item').length,300);assert.equal(reads,0);
+  });
+  await test('appended folders preserve existing nodes, expansion and preview selection',async()=>{
+    const a=fixture('Root'),snapshot={folders:[{name:'Root',path:'',parent:null,depth:0}],files:[]};
+    for(let i=0;i<250;i++){const path='hit'+String(i).padStart(4,'0');snapshot.folders.push({name:path,path,parent:'',depth:1});snapshot.files.push({name:'other.txt',path:path+'/other.txt',parent:path});}
+    const x=await app([a],{snapshot,ui:{query:'hit'},fileAt:async(_,path)=>Object.assign(new Blob([path]),{name:'other.txt'})});
+    await until(()=>x.$('result-count').textContent==='100 / 250');
+    const first=x.$('results').children[0];cls(first,'folder-toggle')[0].onclick();cls(first,'item')[0].onclick();
+    await until(()=>x.$('preview').textContent.includes('hit0000'));
+    await x.$('result-more').onclick();await x.$('result-more').onclick();
+    assert.equal(x.$('results').children[0],first);assert.equal(cls(first,'detail')[0].hidden,false);
+    assert.equal(cls(first,'item')[0].attrs['aria-pressed'],'true');assert(cls(cls(first,'item')[0],'selected').length);
+    const last=x.$('results').children[249];cls(last,'folder-toggle')[0].onclick();cls(last,'item')[0].onclick();
+    await until(()=>x.$('preview').textContent.includes('hit0249'));
+    assert.equal(cls(first,'item')[0].attrs['aria-pressed'],'false');
+    x.$('preview-close').onclick();assert.equal(cls(last,'item')[0].attrs['aria-pressed'],'false');
+    await x.submit('hit');await until(()=>x.$('result-count').textContent==='100 / 250');
+    assert.equal(cls(x.$('results').children[0],'detail')[0].hidden,false);
+    await x.$('result-more').onclick();await x.$('result-more').onclick();
+    assert.equal(cls(x.$('results').children[249],'detail')[0].hidden,false);
+    assert(cls(x.$('results'),'item').every(b=>b.attrs['aria-pressed']==='false'&&!cls(b,'selected').length));
+  });
+  for (const change of ['close','keyword','modified','format','root']) await test(`preview selection clears on ${change}, including late file reads and redraws`,async()=>{
+    const a=fixture('A'),b=fixture('B'),gate=deferred();let reading=false;
+    const snapshot=snap('A',['alpha.txt','alpha.pdf']);snapshot.files.forEach(f=>f.lastModified=Date.now());
+    const x=await app([a,b],{snapshot,ui:{query:'alpha'},fileAt:async()=>{reading=true;await gate.promise;return Object.assign(new Blob(['late']),{name:'alpha.txt'});}});
+    await until(()=>a.state.scans===1);
+    const selected=cls(x.$('results'),'item').find(b=>b.textContent==='alpha.txt');selected.onclick();await until(()=>reading);
+    assert.equal(selected.attrs['aria-pressed'],'true');assert(cls(selected,'selected').length);
+    await x.submit('alpha');x.themeButton.onclick();
+    assert.equal(x.$('preview-panel').hidden,false);assert(cls(x.$('results'),'item').some(b=>b.attrs['aria-pressed']==='true'));
+    const rendered=cls(x.$('results'),'item');
+    if(change==='close') x.$('preview-close').onclick();
+    if(change==='keyword') {x.$('query').value='alpha OR absent';x.$('query').oninput();}
+    if(change==='modified'||change==='format') {x.$(change).value=change==='modified'?'7':'txt';x.$(change).onchange();}
+    if(change==='root') await x.switch('B');
+    assert.equal(x.$('preview-panel').hidden,true);
+    assert(rendered.every(b=>b.attrs['aria-pressed']==='false'&&!cls(b,'selected').length));
+    assert.equal(Object.keys(x.state.settings.selected).length,0);
+    gate.resolve();await new Promise(r=>setTimeout(r,10));
+    assert.equal(x.$('preview').children.length,0);
+    await x.submit(change==='keyword'?'alpha OR absent':'alpha');
+    assert(cls(x.$('results'),'item').every(b=>b.attrs['aria-pressed']==='false'&&!cls(b,'selected').length));
+    if(change==='root') {await x.switch('A');assert(cls(x.$('results'),'item').every(b=>b.attrs['aria-pressed']==='false'));}
   });
   console.log(`${count} app integration tests passed (simulated DOM/handles/storage)`);
 })().catch(e=>{console.error(e);process.exitCode=1;});

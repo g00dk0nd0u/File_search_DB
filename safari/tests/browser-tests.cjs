@@ -84,10 +84,14 @@ const assert=require('node:assert/strict');
       assert.equal(await page.locator('#preview script').count(),0);
       await page.screenshot({path:'/tmp/safari-search-desktop.png',fullPage:true});
     });
-    await check('OR finds two nested parents; expansion and selection survive typing',async()=>{
+    await check('same query keeps selection; changed query clears selection and preview',async()=>{
+      await page.locator('#search').click();await results(1);
+      assert.equal(await page.getByRole('button',{name:'alpha beta.txt',exact:true}).getAttribute('aria-pressed'),'true');
+      assert.equal(await page.locator('#preview-panel').isVisible(),true);
       await query('alpha OR gamma');await results(2);
       assert.equal(await page.locator('#results > details[open]').count(),2);
-      assert.equal(await page.getByRole('button',{name:'alpha beta.txt',exact:true}).getAttribute('aria-pressed'),'true');
+      assert.equal(await page.getByRole('button',{name:'alpha beta.txt',exact:true}).getAttribute('aria-pressed'),'false');
+      assert.equal(await page.locator('#preview-panel').isVisible(),false);
     });
     await check('manual collapse survives redraw but resets for changed query',async()=>{
       const summary=page.locator('#results > details > summary').first();

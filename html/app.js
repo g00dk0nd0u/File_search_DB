@@ -95,6 +95,11 @@
   }
   let previewContext;
   function clearPreviews() {
+    ui.selected = {};
+    for (const button of $("results").querySelectorAll(".item")) {
+      button.classList.remove("selected"); button.setAttribute("aria-pressed", "false");
+    }
+    saveUI();
     $("preview-panel").hidden = true; $("workspace").className = "workspace";
     const pane = $("preview");
     pane._request = null;
@@ -489,12 +494,7 @@
     composing = false;
     searchTimer = setTimeout(submitSearch, 250);
   };
-  $("preview-close").onclick = () => {
-    clearPreviews(); ui.selected = {}; saveUI();
-    for (const button of $("results").querySelectorAll(".item")) {
-      button.classList.remove("selected"); button.setAttribute("aria-pressed", "false");
-    }
-  };
+  $("preview-close").onclick = clearPreviews;
   for (const id of ["modified", "format"]) $(id).onchange = () => {
     ++generation; resetPaging(); clearPreviews(); if (!composing) submitSearch();
   };

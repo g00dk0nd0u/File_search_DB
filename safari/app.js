@@ -42,6 +42,8 @@
   }
   function clearPreview() {
     previewGeneration++;
+    state().selected = null;
+    document.querySelectorAll(".file[aria-pressed=true]").forEach(e => e.setAttribute("aria-pressed", "false"));
     $("preview-panel").hidden = true; $("workspace").className = "workspace";
     $("preview").replaceChildren(); $("preview-title").textContent = "Preview";
     if (objectURL) URL.revokeObjectURL(objectURL);
@@ -291,7 +293,7 @@
       const display = await displayChildren(session, rows, query, current, options);
       if (!current()) return;
       const renderer = resultRenderer(session, query, ui, current, display);
-      // Keep file selection while typing; remove previews outside results.
+      // Same-condition searches keep an open preview if its file still exists.
       if (!S.containsFile(rows, display.display, ui.selected)) clearPreview();
       let cursor = 0;
       nextResults = () => {
@@ -331,8 +333,7 @@
       cell.append(actions); tr.append(cell); $("roots").append(tr);
     }
   }
-  $("preview-close").addEventListener("click", () => { clearPreview(); state().selected = null;
-    document.querySelectorAll(".file[aria-pressed=true]").forEach(e => e.setAttribute("aria-pressed", "false")); });
+  $("preview-close").addEventListener("click", clearPreview);
   for (const id of ["modified", "format"]) $(id).addEventListener("change", () => { clearPreview(); searchGeneration++; resetPaging(); if (!composing) runSearch(); });
   $("root").addEventListener("change", () => choose($("root").value));
   $("query").addEventListener("compositionstart", () => { composing = true; clearTimeout(timer); searchGeneration++; resetPaging(); clearPreview(); });
