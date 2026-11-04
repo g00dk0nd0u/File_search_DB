@@ -33,11 +33,35 @@
   const attempted = new Set(),
     scans = new Map(),
     blocked = new Set();
-  const accessError = (e) => ["NotAllowedError", "SecurityError"].includes(e.name);
-  async function readable(root) {
+  // Latest failure per registration/root, for this page session only.
+  // These summaries never enter a root, snapshot, settings or console log.
+  const diagnostics = new Map();
+  function diagnosticText(detail) {
+    return detail ? `Stage: ${detail.stage}\n${detail.errorName}: ${detail.errorMessage}\nRelative path: ${detail.relativePath}\nProcessed: ${detail.folders} folders · ${detail.files} files` : "";
+  }
+  function recordFailure(error, key = "registration") {
+    if (!error.diagnostic) return;
+    diagnostics.set(key, error.diagnostic);
+    renderRoots();
+  }
+  async function permit(root, request = false, counts = {}) {
+    if (await FS.permission(root.handle, request, counts)) return true;
+    throw FS.failure(new DOMException("Read permission is not granted.", "NotAllowedError"), "permission", counts);
+  }
+  async function sameEntry(root, handle) {
     try {
-      return await FS.permission(root.handle);
-    } catch (_) {
+      return await FS.operation("isSameEntry", () => root.handle.isSameEntry(handle));
+    } catch (error) {
+      recordFailure(error, root.id);
+      throw error;
+    }
+  }
+  const accessError = (e) => ["NotAllowedError", "SecurityError"].includes(e.name);
+  async function readable(root, counts = {}) {
+    try {
+      return await permit(root, false, counts);
+    } catch (error) {
+      recordFailure(error, root.id);
       return false;
     }
   }
@@ -79,7 +103,8 @@
     $("notice").textContent = message;
     $("notice").className = error ? "error" : "";
   }
-  function fail(error) {
+  function fail(error, key) {
+    recordFailure(error, key);
     notice(
       error.name === "AbortError"
         ? "Cancelled. The previous index has been kept."
@@ -179,6 +204,9 @@
   }
 
   function renderRoots() {
+    const registration = diagnostics.get("registration");
+    $("registration-diagnostic").hidden = !registration;
+    $("registration-diagnostic").textContent = diagnosticText(registration);
     roots.sort(
       (a, b) =>
         S.compare(S.fold(a.displayName), S.fold(b.displayName)) ||
@@ -228,6 +256,11 @@
         "root-status",
       );
       status.style.whiteSpace = "pre-line";
+      if (diagnostics.has(root.id)) {
+        const detail = element("details");
+        detail.append(element("summary", "Latest failure"), element("pre", diagnosticText(diagnostics.get(root.id)), "diagnostic"));
+        status.append(detail);
+      }
       const cell = element("td"),
         actions = element("div", undefined, "actions");
       for (const [label, action, cls] of [
@@ -236,10 +269,7 @@
           "Allow access",
           async () => {
             try {
-              if (!(await FS.permission(root.handle, true))) {
-                hideDenied(root);
-                return;
-              }
+              await permit(root, true);
             } catch (e) {
               hideDenied(root);
               throw e;
@@ -263,6 +293,7 @@
             await stopScan(root);
             await db.remove(root.id);
             roots = roots.filter((r) => r.id !== root.id);
+            diagnostics.delete(root.id);
             if (activeId === root.id) {
               activeId = roots[0]?.id || "";
               ui.expanded = [];
@@ -277,7 +308,7 @@
         const b = element("button", label, cls);
         b.disabled =
           busy || (label === "Reselect" && !window.showDirectoryPicker);
-        b.onclick = () => run(action);
+        b.onclick = () => run(action, root.id);
         actions.append(b);
       }
       cell.append(actions);
@@ -289,7 +320,7 @@
     $("search").disabled = !db || !roots.length;
     $("add").disabled = !db || busy || !window.showDirectoryPicker;
   }
-  async function run(action) {
+  async function run(action, key) {
     if (busy) return;
     busy = true;
     renderRoots();
@@ -297,7 +328,7 @@
     try {
       await action();
     } catch (e) {
-      fail(e);
+      fail(e, key);
     } finally {
       busy = false;
       controller = undefined;
@@ -364,7 +395,8 @@
         });
         if (task.controller.signal.aborted)
           throw new DOMException("Scan cancelled", "AbortError");
-        if (!(await readable(root))) {
+        const counts = { folders: next.folders.length - 1, files: next.files.length };
+        if (!(await readable(root, counts))) {
           hideDenied(root);
           return;
         }
@@ -376,8 +408,9 @@
           folderCount: next.folders.length - 1,
           fileCount: next.files.length,
         };
-        await db.commit(updated, next);
+        await FS.operation("saveIndex", () => db.commit(updated, next), counts);
         roots = roots.map((r) => (r.id === root.id ? updated : r));
+        diagnostics.delete(root.id);
         renderRoots();
         if (activeId === root.id) {
           // Invalidate a pending load of the old snapshot, keep expansion/selection.
@@ -388,8 +421,11 @@
           if (manual) notice("Reload complete");
         }
       } catch (e) {
-        if (accessError(e) || !(await readable(root))) hideDenied(root);
-        else if (activeId === root.id) fail(e);
+        const denied = accessError(e) || !(await readable(root));
+        // A follow-up permission check must not replace the original I/O failure.
+        recordFailure(e, root.id);
+        if (denied) hideDenied(root);
+        else if (activeId === root.id) fail(e, root.id);
       } finally {
         scans.delete(root.id);
       }
@@ -403,10 +439,7 @@
     }
     // Only this explicit user gesture may request permission.
     try {
-      if (!(await FS.permission(root.handle, true))) {
-        hideDenied(root);
-        return;
-      }
+      await permit(root, true);
     } catch (e) {
       hideDenied(root);
       throw e;
@@ -415,24 +448,25 @@
     await refresh(root, true);
   }
   async function reselect(root) {
-    const handle = await window.showDirectoryPicker({ mode: "read" });
-    if (!(await root.handle.isSameEntry(handle)))
+    const handle = await FS.operation("showDirectoryPicker", () => window.showDirectoryPicker({ mode: "read" }));
+    if (!(await sameEntry(root, handle)))
       throw Error(
         "Choose the same registered folder. Add a different folder with Add Directory.",
       );
     await stopScan(root);
     const updated = { ...root, handle };
-    await db.put("roots", root.id, updated);
+    await FS.operation("saveHandle", () => db.put("roots", root.id, updated));
     roots = roots.map((r) => (r.id === root.id ? updated : r));
     await recover(updated);
     notice("Folder handle reconnected.");
   }
   $("cancel").onclick = () => controller?.abort();
+  $("clear-diagnostics").onclick = () => { diagnostics.clear(); renderRoots(); };
   $("add").onclick = () =>
     run(async () => {
-      const handle = await window.showDirectoryPicker({ mode: "read" });
+      const handle = await FS.operation("showDirectoryPicker", () => window.showDirectoryPicker({ mode: "read" }));
       for (const root of roots)
-        if (await root.handle.isSameEntry(handle)) {
+        if (await sameEntry(root, handle)) {
           activeId = root.id;
           ui.expanded = [];
           ui.selected = {};
@@ -452,7 +486,7 @@
         fileCount: 0,
       };
       // Save a registration even if its initial scan is later cancelled or denied.
-      await db.put("roots", root.id, root);
+      await FS.operation("saveHandle", () => db.put("roots", root.id, root));
       roots.push(root);
       activeId = root.id;
       ui.expanded = [];

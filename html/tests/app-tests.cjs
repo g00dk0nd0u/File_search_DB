@@ -40,26 +40,99 @@ async function app(roots, options={}) {
   $("modified").value=$("format").value="all";
   $("progress-wrap").hidden = true;
   const stored = new Map(roots.map(r=>[r.id,snap(r.id)]));
+  const registered = new Map(roots.map(r=>[r.id,r]));
   if(options.snapshot) stored.set(roots[0].id, options.snapshot);
   if(options.empty) stored.clear();
-  const state = {commits:0, reads:0, failSave:false, settings:{query:"txt",rootId:roots[0].id,expanded:[],selected:{},...options.ui},readGate:options.readGate};
-  const db = {async roots(){return roots;}, async get(store,id){ if(store==="settings") return state.settings; state.reads++; if(state.readGate) await state.readGate.promise; return stored.get(id);},
-    async put(store,id,value){if(store==="settings") state.settings=structuredClone(value);},
-    async commit(root,value){state.commits++; if(state.failSave) throw new DOMException("Full", "QuotaExceededError"); stored.set(root.id,value);},
-    async remove(id){stored.delete(id);}};
+  const state = {commits:0, reads:0, failSave:false, picker:async()=>roots[0].handle, settings:{query:"txt",rootId:roots[0].id,expanded:[],selected:{},...options.ui},readGate:options.readGate};
+  const db = {async roots(){return [...registered.values()];}, async get(store,id){ if(store==="settings") return state.settings; state.reads++; if(state.readGate) await state.readGate.promise; return stored.get(id);},
+    async put(store,id,value){if(store==="settings") state.settings=structuredClone(value); else {if(state.failRoot) throw state.failRoot; registered.set(id,value);}},
+    async commit(root,value){state.commits++; if(state.failSave) throw (state.failSave instanceof Error ? state.failSave : new DOMException("Full", "QuotaExceededError")); registered.set(root.id,root); stored.set(root.id,value);},
+    async remove(id){stored.delete(id);registered.delete(id);}};
   const themeButton = new Element("button", "Dark Mode");
   const context = {document:{getElementById:$,createElement:tag=>new Element(tag),createTextNode:t=>new Element("text",t),querySelectorAll:()=>[themeButton],documentElement:{dataset:{}}},
     FolderSearch:options.search || Search,FolderFS:options.fileAt ? {...FS, fileAt:options.fileAt} : FS,FolderStore:{open:async()=>db},Option:class extends Element {constructor(t,v){super("option",t);this.value=v;}},
     URL:{createObjectURL(blob){state.urlsCreated=(state.urlsCreated||0)+1;return URL.createObjectURL(blob);},revokeObjectURL(url){state.urlsRevoked=(state.urlsRevoked||0)+1;URL.revokeObjectURL(url);}},AbortController,DOMException,crypto:require("node:crypto").webcrypto,setTimeout,clearTimeout,confirm:()=>true};
-  context.window={indexedDB:{},isSecureContext:true,showDirectoryPicker:async()=>roots[0].handle,addEventListener:()=>{}};
+  context.window={indexedDB:{},isSecureContext:true,showDirectoryPicker:()=>state.picker(),addEventListener:()=>{}};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,"../app.js"),"utf8"),context);
   const submit = async text => {$("query").value=text;$("search-form").onsubmit({preventDefault(){}}); await new Promise(r=>setTimeout(r,5));};
   const action = label => {const find = n => n.tag==="button"&&n.textContent===label ? n : n.children.map(find).find(Boolean);const b=find($("roots")); assert(b, label); return b.onclick();};
-  return {$,stored,state,submit,action,themeButton,document:context.document,async switch(id){$("root").value=id;$("root").onchange();await new Promise(r=>setTimeout(r,5));}};
+  return {$,stored,registered,state,submit,action,themeButton,document:context.document,async switch(id){$("root").value=id;$("root").onchange();await new Promise(r=>setTimeout(r,5));}};
 }
 let count=0;
 async function test(name,fn){await fn();console.log("PASS "+name);count++;}
 (async()=>{
+  await test("an expired existing isSameEntry aborts Add before registration (baseline reproduction)",async()=>{
+    const a=fixture("A"),b=fixture("B"),x=await app([a]);await until(()=>a.state.scans===1);
+    a.handle.isSameEntry=async()=>{throw new DOMException("A requested file or directory could not be found at the time an operation was processed.","NotFoundError");};
+    x.state.picker=async()=>b.handle;const old=x.stored.get("A");await x.$("add").onclick();
+    assert.equal(x.registered.size,1);assert.equal(b.state.scans,0);assert.equal(x.stored.get("A"),old);
+    assert.match(x.$("notice").textContent,/could not be found/);
+    assert.match(x.$("registration-diagnostic").textContent,/Stage: isSameEntry\nNotFoundError:/);
+    assert.equal(x.$("registration-diagnostic").hidden,false);
+    assert.match(x.$("roots").textContent,/Stage: isSameEntry/);
+    assert.equal(JSON.stringify(x.state.settings).includes("diagnostic"),false);
+    x.$("clear-diagnostics").onclick();assert.equal(x.$("registration-diagnostic").hidden,true);
+  });
+  for (const stage of ["showDirectoryPicker","saveHandle"]) await test(`Add failure is localized to ${stage}; no registration or index changes`,async()=>{
+    const a=fixture("A"),b=fixture("B"),x=await app([a]);await until(()=>a.state.scans===1);
+    const error=new DOMException("A requested file or directory could not be found at the time an operation was processed.","NotFoundError");
+    x.state.picker=async()=>{if(stage==="showDirectoryPicker")throw error;return b.handle;};
+    if(stage==="saveHandle")x.state.failRoot=error;
+    const old=x.stored.get("A");await x.$("add").onclick();
+    assert.equal(x.registered.size,1);assert.equal(x.stored.get("A"),old);assert.equal(b.state.scans,0);
+    assert.match(x.$("registration-diagnostic").textContent,new RegExp(`Stage: ${stage}\\nNotFoundError:`));
+    assert.match(x.$("registration-diagnostic").textContent,/Relative path: \.\nProcessed: 0 folders · 0 files/);
+  });
+  await test("new UNC-like root is registered as Not scanned after initial child enumeration failure",async()=>{
+    const a=fixture("A"),b=fixture("BIM"),x=await app([a]);await until(()=>a.state.scans===1);
+    b.state.error=new DOMException("Missing","NotFoundError");b.state.gate.resolve();
+    x.state.picker=async()=>b.handle;await x.$("add").onclick();
+    await until(()=>x.$("roots").textContent.includes("Stage: entries"));
+    const root=[...x.registered.values()].find(r=>r.displayName==="BIM");assert(root);
+    assert.equal(root.lastScanned,"");assert.equal(x.stored.has(root.id),false);
+    assert.match(x.$("roots").textContent,/Not scanned/);assert.match(x.$("roots").textContent,/Processed: 0 folders · 1 files/);
+    assert.equal(x.state.commits,0);
+  });
+  await test("file disappears after enumeration; getFile diagnostic retains precise path/count and old snapshot",async()=>{
+    const a=fixture("A"),x=await app([a]);await until(()=>a.state.scans===1);
+    const old=x.stored.get("A");a.state.error=new DOMException("Stop initial scan","AbortError");a.state.gate.resolve();
+    await until(()=>x.$("notice").textContent.includes("Cancelled"));
+    a.handle.entries=async function*(){yield ["ok.txt",{kind:"file",getFile:async()=>({lastModified:1})}];
+      yield ["子",{kind:"directory",async *entries(){yield ["消失.txt",{kind:"file",getFile:async()=>{throw new DOMException("Missing","NotFoundError");}}];}}];};
+    await x.action("Reload");assert.equal(x.stored.get("A"),old);assert.equal(x.state.commits,0);
+    assert.match(x.$("roots").textContent,/Stage: getFile\nNotFoundError:/);
+    assert.match(x.$("roots").textContent,/Relative path: 子\/消失.txt\nProcessed: 1 folders · 1 files/);
+    // A follow-up permission query must not overwrite the original path/stage.
+    assert.equal(a.state.requests,0);
+  });
+  await test("inactive root failure remains visible in its own Settings row",async()=>{
+    const a=fixture("A"),b=fixture("B"),x=await app([a,b]);await until(()=>a.state.scans===1);
+    await x.switch("B");await until(()=>b.state.scans===1);
+    a.state.error=new DOMException("Missing","NotFoundError");a.state.gate.resolve();
+    await until(()=>x.$("roots").textContent.includes("Stage: entries"));
+    assert.equal(x.$("notice").textContent,"");assert.match(x.$("results").textContent,/B/);
+    const rows=x.$("roots").children;assert.match(rows.find(r=>r.children[0].children[0].value==="A").textContent,/NotFoundError/);
+    assert.doesNotMatch(rows.find(r=>r.children[0].children[0].value==="B").textContent,/NotFoundError/);
+  });
+  await test("query/request permission failures are diagnosed without automatic permission request",async()=>{
+    const a=fixture("A");a.state.permission=new DOMException("Missing","NotFoundError");const x=await app([a]);
+    await until(()=>x.$("meta").textContent.includes("Read access"));
+    assert.match(x.$("roots").textContent,/Stage: queryPermission\nNotFoundError:/);assert.equal(a.state.scans,0);assert.equal(a.state.requests,0);
+    a.state.permission="prompt";a.handle.requestPermission=async()=>{a.state.requests++;throw new DOMException("Denied","NotAllowedError");};
+    await x.action("Reload");assert.match(x.$("roots").textContent,/Stage: requestPermission\nNotAllowedError:/);
+    assert.equal(a.state.requests,1);assert.equal(x.state.commits,0);
+  });
+  await test("diagnostics omit raw paths, URLs, credentials and unknown messages; success clears root failure",async()=>{
+    const a=fixture("A"),x=await app([a]);await until(()=>a.state.scans===1);
+    const old=x.stored.get("A");x.state.failSave=new DOMException("\\\\private-server\\share C:\\secret file://private https://user:password@server token=credential", "NotFoundError");
+    a.state.gate.resolve();await until(()=>x.$("roots").textContent.includes("Stage: saveIndex"));
+    assert.equal(x.stored.get("A"),old);assert.equal(x.registered.get("A").lastScanned,undefined);
+    const shown=x.$("roots").textContent+x.$("notice").textContent;
+    assert.match(shown,/Message omitted/);assert.doesNotMatch(shown,/private-server|secret|user:password|credential|token=/);
+    assert.match(shown,/Processed: 0 folders · 1 files/);assert.equal(JSON.stringify(x.state.settings).includes("diagnostic"),false);
+    x.state.failSave=false;await x.action("Reload");assert.equal(x.$("roots").querySelectorAll(".diagnostic").length,0);
+    assert.equal(x.stored.get("A").files[0].name,"new.txt");
+  });
   await test("cache first; automatic additions/deletions; latest query and expansion retained; once per session",async()=>{
     const a=fixture("A"),x=await app([a]);
     await until(()=>a.state.scans===1);
@@ -87,7 +160,7 @@ async function test(name,fn){await fn();console.log("PASS "+name);count++;}
     a.state.gate.resolve();await until(()=>x.state.commits===1);assert.match(x.$("results").textContent,/B/);assert.doesNotMatch(x.$("results").textContent,/A/);
     b.state.gate.resolve();await until(()=>x.state.commits===2);await x.switch("A");assert.equal(a.state.scans,1);assert.match(x.$("results").textContent,/A/);
   });
-  for(const name of ["NotAllowedError","SecurityError","AbortError","NotReadableError","QuotaExceededError"]) await test("retain old DB on "+name,async()=>{
+  for(const name of ["NotAllowedError","SecurityError","AbortError","NotReadableError","NotFoundError","QuotaExceededError"]) await test("retain old DB on "+name,async()=>{
     const a=fixture("A"),x=await app([a]);await until(()=>a.state.scans===1);const old=x.stored.get("A");
     if(name==="QuotaExceededError") x.state.failSave=true;else a.state.error=new DOMException("Failure",name);
     a.state.gate.resolve();await until(()=>x.$("notice").textContent.includes("kept")||x.$("meta").textContent.includes("Read access"));

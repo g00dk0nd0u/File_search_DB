@@ -275,7 +275,7 @@ async function browserLogic(page, label) {
         output,
       );
       assert.doesNotMatch(output, /FAIL/);
-      assert.match(output, /PASS core \{"passed":29,/);
+      assert.match(output, /PASS core \{"passed":41,/);
       for (const text of [
         "root saved",
         "snapshot reread",
@@ -290,7 +290,7 @@ async function browserLogic(page, label) {
       assert(match);
       markers.browser = JSON.parse(match[1]);
       return {
-        coreAssertions: 29,
+        coreAssertions: 41,
         realIndexedDBAssertions: 7,
         mockScope:
           "core-tests.js directory handles/permissions and generated files are synthetic; native folder access not exercised",
@@ -543,6 +543,69 @@ async function compactUI() {
   },page);
   await page.close();
 }
+async function uncDiagnosticsUI() {
+  // Separate synthetic page: this checks rendered diagnostics, never real UNC I/O.
+  const page = await context.newPage(), state = watch(page, "unc-diagnostics-synthetic");
+  await page.addInitScript(() => {
+    const fixture = window.uncFixture = {failScan:true, commits:0, registrations:0, settings:{query:"txt", rootId:"fixture"}};
+    const missing = () => new DOMException("A requested file or directory could not be found at the time an operation was processed.", "NotFoundError");
+    const file = {kind:"file", getFile:async()=>({lastModified:1})};
+    const root = {id:"fixture",displayName:"Documentation",directoryName:"Documentation",lastScanned:"2026-11-01T00:00:00Z",folderCount:0,fileCount:1,handle:{
+      name:"Documentation",queryPermission:async()=>"granted",isSameEntry:async()=>{throw missing();},
+      async *entries() {
+        yield ["ok.txt",file];
+        yield ["子",{kind:"directory",async *entries(){yield ["消失.txt",{kind:"file",getFile:async()=>{
+          if(fixture.failScan)throw new DOMException("\\\\private-server\\share https://user:password@host token=secret","NotFoundError");
+          return {lastModified:1};
+        }}];}}];
+      },
+    }};
+    fixture.snapshot = {folders:[{name:"Documentation",path:"",parent:null,depth:0}],files:[{name:"old.txt",path:"old.txt",parent:"",depth:1}]};
+    window.showDirectoryPicker = async()=>({name:"BIM"});
+    Object.defineProperty(window,"FolderStore",{configurable:true,set(store){
+      Object.defineProperty(window,"FolderStore",{value:{...store,open:async()=>({
+        roots:async()=>[root],get:async(type)=>type==="settings"?fixture.settings:fixture.snapshot,
+        put:async(type,_,value)=>{if(type==="settings")fixture.settings=structuredClone(value);else fixture.registrations++;},
+        commit:async(_,value)=>{fixture.commits++;fixture.snapshot=value;},
+      })}});
+    }});
+  });
+  await check("UNC failure diagnostics, privacy, clear and successful retry", "real Edge file:// UI; synthetic handles/storage only", async()=>{
+    await page.goto(fileURL("html/index.html"));
+    assert.equal(page.url(),fileURL("html/index.html"));
+    assert.equal(await page.title(),"Folder Search");
+    await page.locator("#settings-button").click();
+    await page.locator("#roots details summary").waitFor();
+    await page.locator("#roots details summary").click();
+    const detail = await page.locator("#roots .diagnostic").innerText();
+    assert.match(detail,/Stage: getFile\nNotFoundError:/);
+    assert.match(detail,/Relative path: 子\/消失.txt\nProcessed: 1 folders · 1 files/);
+    assert.doesNotMatch(await page.locator("body").innerText(),/private-server|user:password|token=secret/);
+    assert.equal(await page.evaluate(()=>window.uncFixture.snapshot.files[0].name),"old.txt");
+    await evidence(page,"unc-diagnostic-desktop");
+    await page.setViewportSize({width:480,height:800});
+    await evidence(page,"unc-diagnostic-mobile");
+    await page.setViewportSize({width:1280,height:900});
+    await page.evaluate(()=>{window.uncFixture.failScan=false;});
+    await page.getByRole("button",{name:"Reload",exact:true}).click();
+    await page.waitForFunction(()=>window.uncFixture.commits===1);
+    await page.locator("#roots details").waitFor({state:"detached"});
+    assert.equal(await page.evaluate(()=>JSON.stringify(window.uncFixture.settings).includes("diagnostic")),false);
+    await page.locator("#add").click();
+    await page.locator("#registration-diagnostic").waitFor();
+    assert.match(await page.locator("#registration-diagnostic").innerText(),/Stage: isSameEntry\nNotFoundError:/);
+    assert.equal(await page.evaluate(()=>window.uncFixture.registrations),0);
+    assert.equal(await page.locator("#roots details").count(),1);
+    await evidence(page,"unc-invalid-existing-handle");
+    await page.locator("#clear-diagnostics").click();
+    assert.equal(await page.locator("#registration-diagnostic").isVisible(),false);
+    assert.equal(await page.locator("#roots details").count(),0);
+    assert.deepEqual(state.errors,[]);assert.deepEqual(state.failedRequests,[]);
+    return {warnings:state.warnings, nativeUNC:"not tested"};
+  },page);
+  await page.close();
+}
+
 async function closeEdge() {
   // CDP only reads process IDs. Browser.close closes this browser normally.
   const session = await context.browser().newBrowserCDPSession();
@@ -697,6 +760,7 @@ async function main() {
     );
     if (!launched) break;
     if (!restart) await compactUI();
+    if (!restart) await uncDiagnosticsUI();
     for (const definition of pages) {
       const { page, state, ready, label } = await openPage(definition, restart);
       if (ready) {
