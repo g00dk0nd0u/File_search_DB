@@ -117,7 +117,7 @@ async function test(name,fn){await fn();console.log("PASS "+name);count++;}
     assert.equal(x.$("results").children[0].children[1].hidden,false);
     a.state.gate.resolve();await until(()=>x.state.commits===1&&x.$("results").textContent.includes("new"));
     assert.equal(x.$("results").children[0].children[1].hidden,false);
-    assert.equal(x.$("preview-panel").hidden,true);
+    assert.equal(x.$("preview-panel").hidden,false);
     assert.equal(Object.keys(x.state.settings.selected).length,0);
     assert(x.$("results").querySelectorAll('.item').every(b=>b.attrs['aria-pressed']==='false'));
   });
@@ -288,7 +288,7 @@ async function test(name,fn){await fn();console.log("PASS "+name);count++;}
   });
   await test("preview close cancels slow media; repeated search and theme preserve open pane", async()=>{
     const a=fixture("A"),slow=deferred(),x=await app([a],{fileAt:()=>slow.promise});await until(()=>a.state.scans===1);
-    assert.equal(x.$("preview-panel").hidden,true);
+    assert.equal(x.$("preview-panel").hidden,false);
     cls(x.$("results"),"item")[0].onclick();await new Promise(r=>setTimeout(r,5));
     assert.equal(x.$("preview-panel").hidden,false);
     await x.submit("txt");assert.equal(x.$("preview-panel").hidden,false);
@@ -307,7 +307,7 @@ async function test(name,fn){await fn();console.log("PASS "+name);count++;}
     assert.doesNotMatch(x.$("results").textContent,/alpha.txt/);
     x.$("modified").value="7";x.$("modified").onchange();await until(()=>x.$("meta").textContent.includes("Reload"));
     assert.match(x.$("results").textContent,/alpha.PDF/);assert.doesNotMatch(x.$("results").textContent,/old.pdf|unknown.pdf/);
-    assert.equal(a.state.scans,1);assert.equal(x.$("preview-panel").hidden,true);
+    assert.equal(a.state.scans,1);assert.equal(x.$("preview-panel").hidden,false);
   });
   await test("name-only folders stay closed and reveal filtered descendants; descendant file matches stay selective",async()=>{
     const a=fixture("Root"), now=Date.now(), day=86400000;
@@ -420,7 +420,7 @@ async function test(name,fn){await fn();console.log("PASS "+name);count++;}
     if(change==='keyword') {x.$('query').value='alpha OR absent';x.$('query').oninput();}
     if(change==='modified'||change==='format') {x.$(change).value=change==='modified'?'7':'txt';x.$(change).onchange();}
     if(change==='root') await x.switch('B');
-    assert.equal(x.$('preview-panel').hidden,true);
+    assert.equal(x.$('preview-panel').hidden,change==='close');
     assert(rendered.every(b=>b.attrs['aria-pressed']==='false'&&!cls(b,'selected').length));
     assert.equal(Object.keys(x.state.settings.selected).length,0);
     gate.resolve();await new Promise(r=>setTimeout(r,10));
@@ -428,6 +428,15 @@ async function test(name,fn){await fn();console.log("PASS "+name);count++;}
     await x.submit(change==='keyword'?'alpha OR absent':'alpha');
     assert(cls(x.$('results'),'item').every(b=>b.attrs['aria-pressed']==='false'&&!cls(b,'selected').length));
     if(change==='root') {await x.switch('A');assert(cls(x.$('results'),'item').every(b=>b.attrs['aria-pressed']==='false'));}
+  });
+  await test("explicit close persists through conditions until selection or reload",async()=>{
+    const a=fixture("A"),x=await app([a]);await until(()=>a.state.scans===1);
+    assert.equal(x.$("preview-panel").hidden,false);
+    x.$("preview-close").onclick();await x.submit("absent");await x.submit("txt");
+    x.$("format").value="txt";x.$("format").onchange();await new Promise(r=>setTimeout(r,10));
+    assert.equal(x.$("preview-panel").hidden,true);
+    cls(x.$("results"),"item")[0].onclick();assert.equal(x.$("preview-panel").hidden,false);
+    const y=await app([fixture("A")]);await until(()=>y.$("root").value==="A");assert.equal(y.$("preview-panel").hidden,false);
   });
   console.log(`${count} app integration tests passed (simulated DOM/handles/storage)`);
 })().catch(e=>{console.error(e);process.exitCode=1;});

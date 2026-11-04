@@ -44,8 +44,8 @@ const assert=require('node:assert/strict');
       assert.equal(await page.locator('#root').getAttribute('aria-label'),'検索対象ルート');
       assert.equal(await page.locator('label[for=root], #reselect, .footer, #search-view .hint:not(#preview .hint)').count(),0);
     });
-    await check('preview starts closed and results use full width',async()=>{
-      assert.equal(await page.locator('#preview-panel').isVisible(),false);
+    await check('preview starts open and empty',async()=>{
+      assert.equal(await page.locator('#preview-panel').isVisible(),true);
       assert.equal(await page.evaluate(()=>document.querySelector('.workspace').firstElementChild===document.querySelector('aside')),true);
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
     });
@@ -80,7 +80,7 @@ const assert=require('node:assert/strict');
         return {left:a.x<b.x,ratio:a.width/b.width,height:a.height,sticky:getComputedStyle(preview).position};
       });
       assert.equal(layout.left,true);assert.ok(Math.abs(layout.ratio-2)<.02);
-      assert.ok(layout.height>=316);assert.equal(layout.sticky,'sticky');
+      assert.ok(layout.height>=240);assert.equal(layout.sticky,'sticky');
       assert.equal(await page.locator('#preview script').count(),0);
       await page.screenshot({path:'/tmp/safari-search-desktop.png',fullPage:true});
     });
@@ -91,7 +91,7 @@ const assert=require('node:assert/strict');
       await query('alpha OR gamma');await results(2);
       assert.equal(await page.locator('#results > details[open]').count(),2);
       assert.equal(await page.getByRole('button',{name:'alpha beta.txt',exact:true}).getAttribute('aria-pressed'),'false');
-      assert.equal(await page.locator('#preview-panel').isVisible(),false);
+      assert.equal(await page.locator('#preview-panel').isVisible(),true);
     });
     await check('manual collapse survives redraw but resets for changed query',async()=>{
       const summary=page.locator('#results > details > summary').first();

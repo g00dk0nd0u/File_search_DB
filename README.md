@@ -175,3 +175,7 @@ This script excludes:
 - The default database path is `data/file_index.db`
 - The default web UI address is `127.0.0.1:8765`
 - The repository is intended to stay on the Python standard library only
+
+### Edge・Safariの検索Preview
+
+`html/`（Windows Edge）と`safari/`（Mac Safari）は、検索画面の初期状態から空Previewを左2/3、検索結果を右1/3に表示します。×で閉じると結果が全幅になり、次のファイル選択か再読込で再表示します。条件変更では内容と選択だけを解除します。狭い画面はPreview→結果の縦配置です。フォームの折り返しと表示領域の変化に合わせて高さを調整し、タイトル・×を残して内容を内部スクロールします。極端に低い画面ではページスクロールで操作できます。Python版は変更していません。

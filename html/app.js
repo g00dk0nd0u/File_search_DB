@@ -100,11 +100,11 @@
       button.classList.remove("selected"); button.setAttribute("aria-pressed", "false");
     }
     saveUI();
-    $("preview-panel").hidden = true; $("workspace").className = "workspace";
     const pane = $("preview");
     pane._request = null;
     for (const pane of urls.keys()) revoke(pane);
     pane.replaceChildren();
+    $("preview-title").textContent = "Preview";
   }
   function saveUI() {
     if (db) db.put("settings", "ui", ui).catch(fail);
@@ -494,7 +494,7 @@
     composing = false;
     searchTimer = setTimeout(submitSearch, 250);
   };
-  $("preview-close").onclick = clearPreviews;
+  $("preview-close").onclick = () => { clearPreviews(); setPreviewOpen(false); };
   for (const id of ["modified", "format"]) $(id).onchange = () => {
     ++generation; resetPaging(); clearPreviews(); if (!composing) submitSearch();
   };
@@ -504,7 +504,7 @@
   }
   async function preview(item, pane, root) {
     const token = {};
-    $("preview-panel").hidden = false; $("workspace").className = "workspace preview-open";
+    setPreviewOpen(true);
     pane._request = token;
     paneMessage(pane, "Loading…");
     try {
@@ -517,7 +517,8 @@
       const file = await FS.fileAt(root.handle, item.path);
       if (!pane.isConnected || pane._request !== token) return;
       const ext = file.name.split(".").at(-1).toLowerCase();
-      pane.replaceChildren(element("h2", file.name, "preview-title"));
+      pane.replaceChildren();
+      $("preview-title").textContent = file.name;
       if (/^(docx?|xlsx?|pptx?|odt|ods|odp)$/.test(ext)) {
         pane.append(
           element(
@@ -848,6 +849,36 @@
     await appendNext();
     if (!cancelled()) autoRefresh(root);
   }
+
+  function resizePreview() {
+    const panel = $("preview-panel");
+    if (panel.hidden || !panel.getBoundingClientRect) return;
+    const viewport = window.visualViewport;
+    const bottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+    const available = Math.floor(bottom - Math.max(16, panel.getBoundingClientRect().top) - 12);
+    const height = `${Math.max(240, available)}px`;
+    if (panel.style.getPropertyValue("--preview-height") !== height)
+      panel.style.setProperty("--preview-height", height);
+  }
+  function setPreviewOpen(open) {
+    $("preview-panel").hidden = !open;
+    $("workspace").className = open ? "workspace preview-open" : "workspace";
+    resizePreview();
+  }
+  window.addEventListener("resize", resizePreview);
+  window.addEventListener("scroll", resizePreview, {passive: true});
+  window.visualViewport?.addEventListener("resize", resizePreview);
+  window.visualViewport?.addEventListener("scroll", resizePreview);
+  if (window.ResizeObserver) {
+    let resizeFrame;
+    const observer = new window.ResizeObserver(() => {
+      window.cancelAnimationFrame(resizeFrame);
+      resizeFrame = window.requestAnimationFrame(resizePreview);
+    });
+    observer.observe(document.querySelector("main"));
+    observer.observe($("preview-title"));
+  }
+  setPreviewOpen(true);
   window.addEventListener("pagehide", clearPreviews);
   try {
     if (!window.indexedDB)
