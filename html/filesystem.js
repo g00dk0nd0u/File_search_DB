@@ -31,6 +31,50 @@
     });
     return result;
   }
+  // Session-only diagnostics. Tokens pair starts/ends without retaining errors or handles.
+  function createDiagnostics() {
+    let events = [], sequence = 0, epoch = 0;
+    const field = value => String(value || "").replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]/g, " ");
+    const identity = value => {
+      const text = field(value);
+      return /[\\:/@=]/.test(text) ? "[Root omitted]" : text.slice(0, 200);
+    };
+    const stamp = date => new Date(date.getTime() + 9 * 3600000).toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " JST");
+    function append(token, result, detail = {}) {
+      if (token.epoch !== epoch) return;
+      events.push(Object.freeze({time: stamp(new Date()), operationId: token.id,
+        operation: token.operation, root: token.root, result,
+        stage: field(detail.stage), errorName: field(detail.errorName),
+        errorMessage: field(detail.errorMessage), relativePath: field(detail.relativePath),
+        folders: detail.folders || 0, files: detail.files || 0}));
+      if (events.length > 100) events.splice(0, events.length - 100);
+    }
+    return {
+      start(operation, root = "registration") {
+        const token = {id: ++sequence, epoch, operation, root: identity(root), done: false};
+        append(token, "Started");
+        return token;
+      },
+      root(token, root) { if (token && !token.done) token.root = identity(root); },
+      finish(token, error, counts = {}) {
+        if (!token || token.done) return;
+        token.done = true;
+        // Normalize again: never trust arbitrary error properties as log fields.
+        const detail = error ? failure(error, error.diagnostic?.stage || "operation",
+          error.diagnostic || counts).diagnostic : counts;
+        append(token, error ? error.name === "AbortError" ? "Cancelled" : "Failed" : "Success", detail);
+      },
+      clear() { events = []; epoch++; },
+      text() {
+        return ["File Search diagnostics (JST)",
+          "Session memory only; root names and relative paths may contain internal information.",
+          ...events.map(e => `#${e.operationId} | ${e.time} | ${e.operation} | ${e.result}\nRoot: ${e.root}\nStage: ${e.stage}\n${e.errorName}: ${e.errorMessage}\nRelative path: ${e.relativePath}\nProcessed: ${e.folders} folders · ${e.files} files`), ""].join("\r\n").replace(/(?<!\r)\n/g, "\r\n");
+      },
+      filename(date = new Date()) {
+        return "file-search-diagnostics-" + stamp(date).replace(/[- :]/g, "").replace("JST", "").replace(/^(\d{8})(\d{6})$/, "$1-$2") + ".txt";
+      },
+    };
+  }
   async function operation(stage, action, context = {}) {
     try {
       return await action();
@@ -117,6 +161,6 @@
     }
     return { text, encoding, truncated: file.size > 16384 };
   }
-  scope.FolderFS = { permission, scan, fileAt, textPreview, failure, operation };
+  scope.FolderFS = { permission, scan, fileAt, textPreview, failure, operation, createDiagnostics };
   if (typeof module !== "undefined") module.exports = scope.FolderFS;
 })(typeof window === "undefined" ? globalThis : window);

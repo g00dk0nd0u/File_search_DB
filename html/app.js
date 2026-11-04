@@ -35,7 +35,9 @@
     blocked = new Set();
   // Latest failure per registration/root, for this page session only.
   // These summaries never enter a root, snapshot, settings or console log.
-  const diagnostics = new Map();
+  const diagnostics = new Map(), history = FS.createDiagnostics();
+  // Diagnostic bookkeeping must never interrupt a scan/search/storage operation.
+  const log = (method, ...args) => { try { return history[method](...args); } catch (_) {} };
   function diagnosticText(detail) {
     return detail ? `Stage: ${detail.stage}\n${detail.errorName}: ${detail.errorMessage}\nRelative path: ${detail.relativePath}\nProcessed: ${detail.folders} folders · ${detail.files} files` : "";
   }
@@ -264,7 +266,7 @@
       const cell = element("td"),
         actions = element("div", undefined, "actions");
       for (const [label, action, cls] of [
-        ["Reload", () => reload(root), "secondary"],
+        ["Reload", token => reload(root, token), "secondary"],
         [
           "Allow access",
           async () => {
@@ -308,7 +310,7 @@
         const b = element("button", label, cls);
         b.disabled =
           busy || (label === "Reselect" && !window.showDirectoryPicker);
-        b.onclick = () => run(action, root.id);
+        b.onclick = () => run(action, root.id, ["Reload", "Reselect", "Allow access"].includes(label) ? label : undefined);
         actions.append(b);
       }
       cell.append(actions);
@@ -320,14 +322,17 @@
     $("search").disabled = !db || !roots.length;
     $("add").disabled = !db || busy || !window.showDirectoryPicker;
   }
-  async function run(action, key) {
+  async function run(action, key, operation) {
     if (busy) return;
+    const token = operation ? log("start", operation, key) : undefined;
     busy = true;
     renderRoots();
     notice();
     try {
-      await action();
+      const outcome = await action(token);
+      log("finish", token, outcome?.error, outcome?.counts);
     } catch (e) {
+      log("finish", token, e);
       fail(e, key);
     } finally {
       busy = false;
@@ -367,19 +372,17 @@
     snapshot = value;
     await showResults();
   }
-  function refresh(root, manual = false) {
+  function refresh(root, manual = false, token) {
     // Register the task before yielding, including permission checks and commit.
     if (scans.has(root.id)) return scans.get(root.id).promise;
+    token = token || log("start", "Auto scan", root.id);
     attempted.add(root.id);
     const task = { controller: new AbortController() };
     scans.set(root.id, task);
     task.promise = (async () => {
       await Promise.resolve();
       try {
-        if (!(await readable(root))) {
-          hideDenied(root);
-          return;
-        }
+        await permit(root);
         if (manual) {
           controller = task.controller;
           $("progress-wrap").hidden = false;
@@ -393,15 +396,13 @@
               }
             : undefined,
         });
-        if (task.controller.signal.aborted)
-          throw new DOMException("Scan cancelled", "AbortError");
         const counts = { folders: next.folders.length - 1, files: next.files.length };
-        if (!(await readable(root, counts))) {
-          hideDenied(root);
-          return;
-        }
+        if (task.controller.signal.aborted)
+          throw FS.failure(new DOMException("Scan cancelled", "AbortError"), "entries", counts);
+        await permit(root, false, counts);
         const current = roots.find((r) => r.id === root.id);
-        if (!current || task.controller.signal.aborted) return;
+        if (!current || task.controller.signal.aborted)
+          throw FS.failure(new DOMException("Scan cancelled", "AbortError"), "saveIndex", counts);
         const updated = {
           ...current,
           lastScanned: new Date().toISOString(),
@@ -420,19 +421,23 @@
           await showResults();
           if (manual) notice("Reload complete");
         }
+        log("finish", token, undefined, counts);
+        return {counts};
       } catch (e) {
+        log("finish", token, e);
         const denied = accessError(e) || !(await readable(root));
         // A follow-up permission check must not replace the original I/O failure.
         recordFailure(e, root.id);
         if (denied) hideDenied(root);
         else if (activeId === root.id) fail(e, root.id);
+        return {error: e};
       } finally {
         scans.delete(root.id);
       }
     })();
     return task.promise;
   }
-  async function reload(root) {
+  async function reload(root, token) {
     if (scans.has(root.id)) {
       controller = scans.get(root.id).controller;
       return scans.get(root.id).promise;
@@ -445,7 +450,7 @@
       throw e;
     }
     blocked.delete(root.id);
-    await refresh(root, true);
+    return await refresh(root, true, token);
   }
   async function reselect(root) {
     const handle = await FS.operation("showDirectoryPicker", () => window.showDirectoryPicker({ mode: "read" }));
@@ -461,12 +466,34 @@
     notice("Folder handle reconnected.");
   }
   $("cancel").onclick = () => controller?.abort();
-  $("clear-diagnostics").onclick = () => { diagnostics.clear(); renderRoots(); };
+  $("clear-diagnostics").onclick = () => { diagnostics.clear(); log("clear"); renderRoots(); };
+  $("export-diagnostics").onclick = () => {
+    let url;
+    try {
+      const blob = new Blob(["\ufeff", history.text()], {type: "text/plain;charset=utf-8"});
+      url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = history.filename();
+      document.body.append(link);
+      link.click();
+      link.remove();
+      notice("Diagnostic log download requested.");
+    } catch (_) { notice("Could not export diagnostic log.", true); }
+    finally { if (url) setTimeout(() => URL.revokeObjectURL(url), 1000); }
+  };
+  $("copy-diagnostics").onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(history.text());
+      notice("Diagnostic log copied.");
+    } catch (_) { notice("Could not copy diagnostic log. Clipboard permission or browser policy may block it. Use Export Diagnostic Log.", true); }
+  };
   $("add").onclick = () =>
-    run(async () => {
+    run(async token => {
       const handle = await FS.operation("showDirectoryPicker", () => window.showDirectoryPicker({ mode: "read" }));
       for (const root of roots)
         if (await sameEntry(root, handle)) {
+          log("root", token, root.id);
           activeId = root.id;
           ui.expanded = [];
           ui.selected = {};
@@ -485,6 +512,7 @@
         folderCount: 0,
         fileCount: 0,
       };
+      log("root", token, root.id);
       // Save a registration even if its initial scan is later cancelled or denied.
       await FS.operation("saveHandle", () => db.put("roots", root.id, root));
       roots.push(root);
@@ -492,7 +520,7 @@
       ui.expanded = [];
       ui.selected = {};
       await loadActive();
-    });
+    }, undefined, "Add");
   $("root").onchange = () => {
     activeId = $("root").value;
     ui.expanded = [];

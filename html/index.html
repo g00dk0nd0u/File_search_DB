@@ -93,6 +93,9 @@
         <p id="storage-info" class="hint"></p>
         <p class="hint">Latest failures stay in memory until this page is closed or reloaded. Relative paths only; unknown error messages are omitted for privacy.</p>
         <pre id="registration-diagnostic" class="diagnostic" aria-live="polite" hidden></pre>
+        <p class="hint">The latest 100 diagnostic events stay in session memory only. Exported or copied root identifiers and relative paths may contain internal company information. Review before sharing. No automatic transmission.</p>
+        <button id="export-diagnostics" type="button" class="secondary">Export Diagnostic Log</button>
+        <button id="copy-diagnostics" type="button" class="secondary">Copy Diagnostic Log</button>
         <button id="clear-diagnostics" type="button" class="secondary">Clear diagnostics</button>
       </section>
       <div id="notice" role="status" hidden></div>
