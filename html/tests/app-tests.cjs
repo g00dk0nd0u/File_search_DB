@@ -13,6 +13,8 @@ class Element {
     add: name => { this.className = [...new Set([...this.className.split(" ").filter(Boolean), name])].join(" "); },
     remove: name => { this.className = this.className.split(" ").filter(c => c !== name).join(" "); },
   }; }
+  click() { this.onclick?.(); }
+  remove() {}
   set textContent(v) { this.text = v; this.children = []; }
   get textContent() { return this.text + this.children.map(c => c.textContent).join(""); }
   append(...items) { for (const item of items) { this.children = this.children.filter(c => c !== item); this.children.push(item); } }
@@ -49,9 +51,9 @@ async function app(roots, options={}) {
     async commit(root,value){state.commits++; if(state.failSave) throw (state.failSave instanceof Error ? state.failSave : new DOMException("Full", "QuotaExceededError")); registered.set(root.id,root); stored.set(root.id,value);},
     async remove(id){stored.delete(id);registered.delete(id);}};
   const themeButton = new Element("button", "Dark Mode");
-  const context = {document:{getElementById:$,createElement:tag=>new Element(tag),createTextNode:t=>new Element("text",t),querySelectorAll:()=>[themeButton],documentElement:{dataset:{}}},
+  const context = {document:{body:new Element("body"),getElementById:$,createElement:tag=>new Element(tag),createTextNode:t=>new Element("text",t),querySelectorAll:()=>[themeButton],documentElement:{dataset:{}}},
     FolderSearch:options.search || Search,FolderFS:options.fileAt ? {...FS, fileAt:options.fileAt} : FS,FolderStore:{open:async()=>db},Option:class extends Element {constructor(t,v){super("option",t);this.value=v;}},
-    URL:{createObjectURL(blob){state.urlsCreated=(state.urlsCreated||0)+1;return URL.createObjectURL(blob);},revokeObjectURL(url){state.urlsRevoked=(state.urlsRevoked||0)+1;URL.revokeObjectURL(url);}},AbortController,DOMException,crypto:require("node:crypto").webcrypto,setTimeout,clearTimeout,confirm:()=>true};
+    URL:{createObjectURL(blob){state.exportBlob=blob;state.urlsCreated=(state.urlsCreated||0)+1;return URL.createObjectURL(blob);},revokeObjectURL(url){state.urlsRevoked=(state.urlsRevoked||0)+1;URL.revokeObjectURL(url);}},Blob,navigator:{clipboard:{async writeText(text){if(state.copyError)throw state.copyError;state.copied=text;}}},AbortController,DOMException,crypto:require("node:crypto").webcrypto,setTimeout,clearTimeout,confirm:()=>true};
   context.window={indexedDB:{},isSecureContext:true,showDirectoryPicker:()=>state.picker(),addEventListener:()=>{}};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,"../app.js"),"utf8"),context);
   const submit = async text => {$("query").value=text;$("search-form").onsubmit({preventDefault(){}}); await new Promise(r=>setTimeout(r,5));};
@@ -61,6 +63,77 @@ async function app(roots, options={}) {
 let count=0;
 async function test(name,fn){await fn();console.log("PASS "+name);count++;}
 (async()=>{
+  await test("diagnostic history pairs overlapping automatic and manual scans; export/copy/clear preserve data",async()=>{
+    const a=fixture("A"),x=await app([a]);await until(()=>a.state.scans===1);
+    const reload=x.action("Reload");
+    a.state.error=new DOMException("\\\\private-server\\share token=secret", "NotFoundError");
+    a.state.gate.resolve();await reload;
+    await x.$("copy-diagnostics").onclick();
+    const text=x.state.copied;
+    assert.equal((text.match(/ \| Started/g)||[]).length,2);
+    assert.equal((text.match(/ \| Failed/g)||[]).length,2);
+    assert.equal((text.match(/ \| Success/g)||[]).length,0);
+    assert.match(text,/Auto scan/);assert.match(text,/Reload/);assert.match(text,/Stage: entries/);
+    assert.doesNotMatch(text,/private-server|token=secret/);
+    assert.equal(text.replace(/\r\n/g, "").includes("\n"),false);
+    x.$("export-diagnostics").onclick();
+    const bytes=new Uint8Array(await x.state.exportBlob.arrayBuffer());
+    assert.deepEqual([...bytes.slice(0,3)],[239,187,191]);
+    assert.equal(new TextDecoder().decode(bytes),text);
+    x.state.copyError=Error("policy");await x.$("copy-diagnostics").onclick();
+    assert.match(x.$("notice").textContent,/Could not copy/);
+    const old=x.stored.get("A");x.$("clear-diagnostics").onclick();
+    await x.$("copy-diagnostics").onclick();assert.equal(x.stored.get("A"),old);assert.equal(x.registered.size,1);
+    x.state.copyError=null;await x.$("copy-diagnostics").onclick();assert.doesNotMatch(x.state.copied,/Started|Failed/);
+    a.state.error=null;await x.action("Reload");await x.$("copy-diagnostics").onclick();
+    assert.equal((x.state.copied.match(/ \| Success/g)||[]).length,1);
+    assert.match(x.state.copied,/Processed: 0 folders · 1 files/);
+    assert.equal(JSON.stringify(x.state.settings).includes("operationId"),false);
+  });
+  await test("history bounds 100/101 events, deduplicates finishes, isolates clear and async tokens",async()=>{
+    const history=FS.createDiagnostics();
+    const tokens=Array.from({length:100},(_,i)=>history.start("Add",`root${i}`));
+    assert.equal((history.text().match(/ \| Started/g)||[]).length,100);
+    history.finish(tokens[99]);history.finish(tokens[99]);
+    assert.equal((history.text().match(/^#/gm)||[]).length,100);
+    assert.doesNotMatch(history.text(),/#1 \|/);assert.match(history.text(),/#2 \|/);
+    assert.equal((history.text().match(/ \| Success/g)||[]).length,1);
+    history.clear();history.finish(tokens[0]);assert.doesNotMatch(history.text(),/^#/m);
+    const token=history.start("Reload","\\\\server\\share");
+    history.finish(token,FS.failure(new DOMException("password=secret", "SecretError"),"getFile",{relativePath:"C:\\private"}));
+    assert.doesNotMatch(history.text(),/server|share|password|SecretError|C:\\private/);
+    assert.match(history.text(),/Root omitted/);assert.match(history.text(),/Path omitted/);
+    assert.equal(history.filename(new Date("2026-11-04T16:45:06Z")),"file-search-diagnostics-20261105-014506.txt");
+  });
+  for (const kind of ["getFile", "saveIndex", "permission", "cancel"]) await test(`history records ${kind} once and never reports failed scan success`,async()=>{
+    const a=fixture("A"),x=await app([a]);await until(()=>a.state.scans===1);
+    const old=x.stored.get("A");
+    if(kind==="getFile")a.handle.entries=async function*(){yield ["bad.txt",{kind:"file",getFile:async()=>{throw new DOMException("private payload", "NotReadableError");}}];};
+    if(kind==="saveIndex")x.state.failSave=true;
+    if(kind==="permission")a.state.permission="denied";
+    if(kind==="cancel")a.state.error=new DOMException("Scan cancelled", "AbortError");
+    // Initial enumeration already owns its generator; getFile is exercised by next Reload.
+    a.state.gate.resolve();await until(()=>x.$("roots").textContent.includes("Stage:")||x.state.commits===1);
+    if(kind==="getFile")await x.action("Reload");
+    await x.$("copy-diagnostics").onclick();const text=x.state.copied;
+    assert(text.includes(` | ${kind==="cancel"?"Cancelled":"Failed"}`));
+    assert.doesNotMatch(text,/private payload/);
+    if(kind!=="getFile")assert.equal(x.stored.get("A"),old);
+    const endings=text.split("\r\n").filter(line=>/^#/.test(line)&&!/Started$/.test(line));
+    assert.equal(new Set(endings.map(line=>line.split(" | ")[0])).size,endings.length);
+  });
+  await test("Add, Reselect and Allow access have paired success; picker cancellation stays cancelled",async()=>{
+    const a=fixture("A"),b=fixture("B"),x=await app([a]);await until(()=>a.state.scans===1);
+    a.state.gate.resolve();await until(()=>x.state.commits===1);
+    await x.action("Reselect");await x.action("Allow access");
+    x.state.picker=async()=>{throw new DOMException("The user aborted a request.","AbortError");};
+    await x.$("add").onclick();await x.$("copy-diagnostics").onclick();
+    assert.match(x.state.copied,/Add \| Cancelled/);assert.doesNotMatch(x.state.copied,/Add \| Success/);
+    for(const name of ["Reselect","Allow access"])assert.match(x.state.copied,new RegExp(`${name} \\| Success`));
+    x.state.picker=async()=>b.handle;b.state.gate.resolve();await x.$("add").onclick();
+    await until(()=>x.state.commits>=2);await x.$("copy-diagnostics").onclick();
+    assert.match(x.state.copied,/Add \| Success/);assert.equal(x.registered.size,2);
+  });
   await test("an expired existing isSameEntry aborts Add before registration (baseline reproduction)",async()=>{
     const a=fixture("A"),b=fixture("B"),x=await app([a]);await until(()=>a.state.scans===1);
     a.handle.isSameEntry=async()=>{throw new DOMException("A requested file or directory could not be found at the time an operation was processed.","NotFoundError");};

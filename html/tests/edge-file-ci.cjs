@@ -597,6 +597,27 @@ async function uncDiagnosticsUI() {
     assert.equal(await page.evaluate(()=>window.uncFixture.registrations),0);
     assert.equal(await page.locator("#roots details").count(),1);
     await evidence(page,"unc-invalid-existing-handle");
+    const downloadPromise = page.waitForEvent("download");
+    await page.locator("#export-diagnostics").click();
+    const download = await downloadPromise;
+    assert.match(download.suggestedFilename(),/^file-search-diagnostics-\d{8}-\d{6}\.txt$/);
+    const exported = fs.readFileSync(await download.path());
+    assert.deepEqual([...exported.subarray(0,3)],[239,187,191]);
+    const logText = exported.subarray(3).toString("utf8");
+    assert.match(logText,/Auto scan \| Failed/);
+    assert.match(logText,/Reload \| Success/);
+    assert.match(logText,/Add \| Failed/);
+    assert.match(logText,/Stage: getFile/);
+    assert.doesNotMatch(logText,/private-server|user:password|token=secret/);
+    assert.equal(logText.replace(/\r\n/g, "").includes("\n"),false);
+    // Deterministic clipboard policy outcomes; no native permission grant.
+    await page.evaluate(()=>Object.defineProperty(navigator,"clipboard",{configurable:true,value:{writeText:async text=>{window.copiedDiagnostics=text;}}}));
+    await page.locator("#copy-diagnostics").click();
+    await page.waitForFunction(()=>document.getElementById("notice").textContent==="Diagnostic log copied.");
+    assert.equal(await page.evaluate(()=>window.copiedDiagnostics),logText);
+    await page.evaluate(()=>{navigator.clipboard.writeText=async()=>{throw new DOMException("Policy", "NotAllowedError");};});
+    await page.locator("#copy-diagnostics").click();
+    await page.waitForFunction(()=>document.getElementById("notice").textContent.startsWith("Could not copy"));
     await page.locator("#clear-diagnostics").click();
     assert.equal(await page.locator("#registration-diagnostic").isVisible(),false);
     assert.equal(await page.locator("#roots details").count(),0);
