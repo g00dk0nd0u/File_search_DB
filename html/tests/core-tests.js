@@ -182,6 +182,41 @@
       )) && mode === "read",
       "read-only reauthorization",
     );
+    // These handles simulate a shared-folder topology, not Windows/SMB/UNC I/O.
+    const shared = await FS.scan(directory("_Progress Models", [
+      ...Array.from({length: 81}, (_, i) => directory("Model " + i, [f("a.rvt"), f("b.dwg")])),
+      ...Array.from({length: 8}, (_, i) => f("資料 " + i + ".pdf")),
+    ]));
+    equal([shared.folders.length - 1, shared.files.length], [81, 170], "UNC-like topology succeeds in mock only");
+    async function failureOf(action) {
+      try { await action(); } catch (error) { return error.diagnostic; }
+      throw Error("Expected operation to fail");
+    }
+    const missing = () => new DOMException("A requested file or directory could not be found at the time an operation was processed.", "NotFoundError");
+    for (const synchronous of [true, false]) {
+      const child = {name:"子", kind:"directory", entries: synchronous
+        ? () => {throw missing();}
+        : async function* () {yield ["先行.txt", f("先行.txt")]; throw missing();}};
+      const detail = await failureOf(() => FS.scan(directory("BIM", [f("ok.txt"), child])));
+      equal([detail.stage, detail.errorName, detail.relativePath, detail.folders, detail.files],
+        ["entries", "NotFoundError", "子", 1, synchronous ? 1 : 2], "sync/async enumeration failure retains path and counts");
+    }
+    const vanished = {name:"消失.txt",kind:"file",getFile:async()=>{throw missing();}};
+    const lost = await failureOf(() => FS.scan(directory("Documentation", [f("ok.txt"), directory("子", [vanished])])));
+    equal([lost.stage, lost.relativePath, lost.folders, lost.files], ["getFile", "子/消失.txt", 1, 1], "file disappears after enumeration; metadata failure aborts without a partial snapshot");
+    equal((await failureOf(() => FS.permission({queryPermission:async()=>{throw missing();}}))).stage,
+      "queryPermission", "query permission exception is identified");
+    equal((await failureOf(() => FS.permission({queryPermission:async()=>"prompt",requestPermission:async()=>{throw missing();}}, true))).stage,
+      "requestPermission", "request permission exception is identified");
+    const denied = await failureOf(() => FS.scan(directory("Root", [{name:"Private",kind:"directory",async *entries(){throw new DOMException("Denied", "NotAllowedError");}}])));
+    equal([denied.stage, denied.errorName, denied.relativePath], ["entries", "NotAllowedError", "Private"], "child access loss is not skipped");
+    const privateError = new Error("\\\\server\\share C:\\private https://user:password@host token=secret");
+    privateError.name = "credential=secret";
+    for (const relativePath of ["\\\\server\\share", "C:/private", "/absolute", "../private", "file://server/share"]) {
+      const detail = FS.failure(privateError, "getFile", {relativePath}).diagnostic;
+      equal([detail.errorName, detail.errorMessage, detail.relativePath],
+        ["Error", "[Message omitted: may contain private data.]", "[Path omitted]"], "unsafe names/messages/absolute paths are not recorded");
+    }
     const text = await FS.textPreview(
       new Blob(["日本語 <script>alert(1)</script>"]),
     );

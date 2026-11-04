@@ -311,6 +311,7 @@ td input {
 .more-items { margin: 8px 0; }
 
 /* Closing is explicit; clearing a selection preserves panel visibility. */
+.diagnostic { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 .workspace { grid-template-columns: minmax(0, 1fr); }
 .workspace.preview-open { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
 #preview-panel { position: sticky; top: 16px; min-width: 0; }
